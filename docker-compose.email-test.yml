@@ -1,5 +1,6 @@
 # docker-compose.email-test.yml
-# Test overlay: adds mock Gmail server for pinchy-email E2E tests.
+# Test overlay: adds mock Gmail and mock Microsoft Graph servers for pinchy-email
+# E2E tests.
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.e2e.yml -f docker-compose.email-test.yml up --build -d
 
@@ -15,14 +16,28 @@ services:
       timeout: 3s
       retries: 10
 
+  graph-mock:
+    build:
+      context: config/graph-mock
+    ports:
+      - "9005:9005"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:9005/control/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   pinchy:
     environment:
       # Emit a dummy API-key SecretRef for the local Ollama provider so OpenClaw
       # authenticates when routing to host.docker.internal (not treated as local).
       - PINCHY_E2E_OLLAMA_LOCAL_API_KEY=1
       # The web app performs the OAuth token refresh (credentials route), so it
-      # is the container that must talk to the mock's /token endpoint.
+      # is the container that must talk to the mocks' /token endpoints.
       - GMAIL_OAUTH_BASE_URL=http://gmail-mock:9004
+      - MICROSOFT_OAUTH_BASE_URL=http://graph-mock:9005
+      # The OAuth callback and connection probe fetch the user profile from Graph.
+      - GRAPH_API_BASE_URL=http://graph-mock:9005
     extra_hosts:
       # Allows Pinchy (Docker) to fetch the Ollama model list from fake-Ollama on
       # the host during regenerateOpenClawConfig(). OpenClaw already has this
@@ -31,5 +46,6 @@ services:
 
   openclaw:
     environment:
-      # The pinchy-email plugin (running inside OpenClaw) calls the Gmail API.
+      # The pinchy-email plugin (running inside OpenClaw) calls the provider APIs.
       - GMAIL_API_BASE_URL=http://gmail-mock:9004
+      - GRAPH_API_BASE_URL=http://graph-mock:9005
