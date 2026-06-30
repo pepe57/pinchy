@@ -112,8 +112,11 @@ jobs:
         # (run by `pnpm test:scripts`) keeps every plugin wired for this gate.
         run: pnpm typecheck:plugins
 
+      - name: Docs lint (no indented tables)
+        run: cd docs && pnpm install --frozen-lockfile && pnpm check:tables
+
       - name: Docs build
-        run: cd docs && pnpm install --frozen-lockfile && pnpm build
+        run: cd docs && pnpm build
 
       - name: Squawk migration lint (changed files only)
         if: github.event_name == 'pull_request'
