@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { refreshAccessToken, isTokenExpired } from "../google-oauth.js";
+import { refreshAccessToken } from "../google-oauth.js";
+// isTokenExpired is shared across all providers; test it directly against its
+// source module instead of via google-oauth's re-export (see D14 cleanup).
+import { isTokenExpired } from "../oauth-token.js";
 
 describe("isTokenExpired", () => {
   it("returns true if expiresAt is in the past", () => {

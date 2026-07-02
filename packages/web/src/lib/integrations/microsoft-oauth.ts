@@ -1,8 +1,6 @@
 // MICROSOFT_OAUTH_BASE_URL allows E2E tests to redirect OAuth token refresh calls
 // to a local mock server instead of https://login.microsoftonline.com/
 
-export { isTokenExpired } from "@/lib/integrations/oauth-token";
-
 export async function refreshAccessToken(opts: {
   tenantId: string;
   refreshToken: string;

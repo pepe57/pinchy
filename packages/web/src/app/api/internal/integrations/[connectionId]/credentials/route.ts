@@ -5,11 +5,9 @@ import { db } from "@/db";
 import { integrationConnections } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { decrypt, encrypt } from "@/lib/encryption";
-import { isTokenExpired, refreshAccessToken } from "@/lib/integrations/google-oauth";
-import {
-  isTokenExpired as isMsTokenExpired,
-  refreshAccessToken as refreshMsAccessToken,
-} from "@/lib/integrations/microsoft-oauth";
+import { refreshAccessToken } from "@/lib/integrations/google-oauth";
+import { refreshAccessToken as refreshMsAccessToken } from "@/lib/integrations/microsoft-oauth";
+import { isTokenExpired } from "@/lib/integrations/oauth-token";
 import { getOAuthSettings } from "@/lib/integrations/oauth-settings";
 
 interface GoogleCredentials {
@@ -238,7 +236,7 @@ export async function GET(
   if (
     connection.type === "microsoft" &&
     credentials.expiresAt &&
-    isMsTokenExpired(credentials.expiresAt)
+    isTokenExpired(credentials.expiresAt)
   ) {
     try {
       credentials = await refreshMicrosoftCredentials(

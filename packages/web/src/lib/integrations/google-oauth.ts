@@ -4,8 +4,6 @@ const TOKEN_ENDPOINT = process.env.GMAIL_OAUTH_BASE_URL
   ? `${process.env.GMAIL_OAUTH_BASE_URL}/token`
   : "https://oauth2.googleapis.com/token";
 
-export { isTokenExpired } from "@/lib/integrations/oauth-token";
-
 export async function refreshAccessToken(opts: {
   refreshToken: string;
   clientId: string;

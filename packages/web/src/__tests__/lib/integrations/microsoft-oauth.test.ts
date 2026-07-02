@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { isTokenExpired, refreshAccessToken } from "@/lib/integrations/microsoft-oauth";
+import { refreshAccessToken } from "@/lib/integrations/microsoft-oauth";
+// isTokenExpired is shared across all providers; test it directly against its
+// source module instead of via microsoft-oauth's re-export (see D14 cleanup).
+import { isTokenExpired } from "@/lib/integrations/oauth-token";
 
 describe("microsoft-oauth", () => {
   beforeEach(() => {

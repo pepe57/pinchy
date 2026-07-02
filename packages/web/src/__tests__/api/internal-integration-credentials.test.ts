@@ -34,7 +34,6 @@ vi.mock("@/lib/encryption", () => ({
 }));
 
 vi.mock("@/lib/integrations/google-oauth", () => ({
-  isTokenExpired: vi.fn().mockReturnValue(false),
   refreshAccessToken: vi.fn().mockResolvedValue({
     accessToken: "refreshed-access-token",
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -42,12 +41,18 @@ vi.mock("@/lib/integrations/google-oauth", () => ({
 }));
 
 vi.mock("@/lib/integrations/microsoft-oauth", () => ({
-  isTokenExpired: vi.fn().mockReturnValue(false),
   refreshAccessToken: vi.fn().mockResolvedValue({
     accessToken: "ms-refreshed-access-token",
     refreshToken: "ms-new-refresh-token",
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   }),
+}));
+
+// The route imports isTokenExpired once from oauth-token and reuses it for
+// both the Google and Microsoft branches (see D14 cleanup). Mock it here
+// instead of via the provider-specific modules' re-exports.
+vi.mock("@/lib/integrations/oauth-token", () => ({
+  isTokenExpired: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock("@/lib/integrations/oauth-settings", () => ({
@@ -57,11 +62,9 @@ vi.mock("@/lib/integrations/oauth-settings", () => ({
 import { validateGatewayToken } from "@/lib/gateway-auth";
 import { db } from "@/db";
 import { decrypt, encrypt } from "@/lib/encryption";
-import { isTokenExpired, refreshAccessToken } from "@/lib/integrations/google-oauth";
-import {
-  isTokenExpired as isMsTokenExpired,
-  refreshAccessToken as refreshMsAccessToken,
-} from "@/lib/integrations/microsoft-oauth";
+import { refreshAccessToken } from "@/lib/integrations/google-oauth";
+import { refreshAccessToken as refreshMsAccessToken } from "@/lib/integrations/microsoft-oauth";
+import { isTokenExpired } from "@/lib/integrations/oauth-token";
 import { getOAuthSettings } from "@/lib/integrations/oauth-settings";
 import { GET } from "@/app/api/internal/integrations/[connectionId]/credentials/route";
 
@@ -388,7 +391,7 @@ describe("GET /api/internal/integrations/:connectionId/credentials", () => {
           credentials: "encrypted-ms-blob",
         },
       ]);
-      vi.mocked(isMsTokenExpired).mockReturnValue(false);
+      vi.mocked(isTokenExpired).mockReturnValue(false);
       vi.mocked(decrypt).mockReturnValue(
         JSON.stringify({
           accessToken: "ms-old-access-token",
@@ -409,7 +412,7 @@ describe("GET /api/internal/integrations/:connectionId/credentials", () => {
           scope: "offline_access Mail.ReadWrite",
         })
       );
-      vi.mocked(isMsTokenExpired).mockReturnValue(true);
+      vi.mocked(isTokenExpired).mockReturnValue(true);
 
       const newExpiresAt = new Date(Date.now() + 3600_000).toISOString();
       vi.mocked(refreshMsAccessToken).mockResolvedValue({
@@ -450,7 +453,7 @@ describe("GET /api/internal/integrations/:connectionId/credentials", () => {
     });
 
     it("returns 503 with a structured error when Microsoft OAuth settings are missing for an expired token (no stale credentials leaked)", async () => {
-      vi.mocked(isMsTokenExpired).mockReturnValue(true);
+      vi.mocked(isTokenExpired).mockReturnValue(true);
       const expiredAt = new Date(Date.now() - 60_000).toISOString();
       vi.mocked(decrypt).mockReturnValue(
         JSON.stringify({
@@ -481,7 +484,7 @@ describe("GET /api/internal/integrations/:connectionId/credentials", () => {
     });
 
     it("concurrent requests for the same connectionId share a single refresh (in-flight dedup)", async () => {
-      vi.mocked(isMsTokenExpired).mockReturnValue(true);
+      vi.mocked(isTokenExpired).mockReturnValue(true);
       const expiredAt = new Date(Date.now() - 60_000).toISOString();
       vi.mocked(decrypt).mockReturnValue(
         JSON.stringify({
@@ -537,7 +540,7 @@ describe("GET /api/internal/integrations/:connectionId/credentials", () => {
     });
 
     it("refresh failure returns the stale credentials (graceful degradation)", async () => {
-      vi.mocked(isMsTokenExpired).mockReturnValue(true);
+      vi.mocked(isTokenExpired).mockReturnValue(true);
       const expiredAt = new Date(Date.now() - 60_000).toISOString();
       const staleCredentials = {
         accessToken: "ms-stale-access-token",
