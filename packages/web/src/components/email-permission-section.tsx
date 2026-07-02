@@ -94,12 +94,25 @@ export function EmailPermissionSection({
               const permSet = new Set<string>();
 
               for (const perm of entry.permissions) {
-                if (
-                  perm.model === "email" &&
-                  EMAIL_OPERATIONS.includes(perm.operation as EmailOperation)
-                ) {
-                  ops[perm.operation as EmailOperation] = true;
-                  permSet.add(`email:${perm.operation}`);
+                if (perm.model !== "email") continue;
+
+                // Legacy alias: pre-#328 agent template creation could persist
+                // a standalone "search" or "list" row with NO accompanying
+                // "read" row (see tool-registry.ts EMAIL_OPERATIONS comment).
+                // The runtime (getEmailToolsForOperations / checkPermission)
+                // treats both as granting the full "read" toolset, so the
+                // checkbox must reflect that effective grant — otherwise it
+                // renders unchecked while read tools are actually enabled,
+                // and a save would silently revoke read by writing back only
+                // the checked operations.
+                const normalizedOp =
+                  perm.operation === "search" || perm.operation === "list"
+                    ? "read"
+                    : perm.operation;
+
+                if (EMAIL_OPERATIONS.includes(normalizedOp as EmailOperation)) {
+                  ops[normalizedOp as EmailOperation] = true;
+                  permSet.add(`email:${normalizedOp}`);
                 }
               }
 

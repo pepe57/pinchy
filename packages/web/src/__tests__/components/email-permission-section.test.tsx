@@ -153,6 +153,95 @@ describe("EmailPermissionSection", () => {
     });
   });
 
+  // MIGRATION TEST (AGENTS.md § "Test Migrations Against Pre-Existing Data"):
+  // pre-#328 agent template creation could persist a standalone (email,
+  // "search") or (email, "list") permission row with NO accompanying "read"
+  // row (see tool-registry.ts EMAIL_OPERATIONS comment for the write-path
+  // history). The runtime (getEmailToolsForOperations / checkPermission)
+  // treats both as granting the full "read" toolset, so the UI must reflect
+  // that effective grant instead of filtering the legacy row out — otherwise
+  // the checkbox renders unchecked while email_list/email_read/email_search/
+  // email_get_attachment are actually enabled, and a save on this section (or
+  // an unrelated permissions-tab save that reuses this component's payload)
+  // silently revokes read by writing back only the checked operations.
+  describe("legacy operation rows (pre-#328 rows without a 'read' row)", () => {
+    it("checks the 'read' checkbox when only a legacy 'search' row is loaded", async () => {
+      mockAgentPerms([
+        {
+          connectionId: "email-1",
+          connectionName: "Gmail Work",
+          connectionType: "google",
+          permissions: [{ model: "email", modelName: "Email", operation: "search" }],
+        },
+      ]);
+      const onChange = vi.fn();
+
+      render(
+        <EmailPermissionSection
+          agentId="agent-1"
+          connections={[makeEmailConnection("email-1", "Gmail Work", "google")]}
+          onChange={onChange}
+        />
+      );
+      await waitFor(() => {
+        const readCheckbox = screen.getByRole("checkbox", { name: /read.*email/i });
+        expect(readCheckbox).toBeChecked();
+      });
+    });
+
+    it("checks the 'read' checkbox when only a legacy 'list' row is loaded", async () => {
+      mockAgentPerms([
+        {
+          connectionId: "email-1",
+          connectionName: "Gmail Work",
+          connectionType: "google",
+          permissions: [{ model: "email", modelName: "Email", operation: "list" }],
+        },
+      ]);
+      const onChange = vi.fn();
+
+      render(
+        <EmailPermissionSection
+          agentId="agent-1"
+          connections={[makeEmailConnection("email-1", "Gmail Work", "google")]}
+          onChange={onChange}
+        />
+      );
+      await waitFor(() => {
+        const readCheckbox = screen.getByRole("checkbox", { name: /read.*email/i });
+        expect(readCheckbox).toBeChecked();
+      });
+    });
+
+    it("normalizes a legacy 'search' row to 'read' in the payload reported to onChange", async () => {
+      mockAgentPerms([
+        {
+          connectionId: "email-1",
+          connectionName: "Gmail Work",
+          connectionType: "google",
+          permissions: [{ model: "email", modelName: "Email", operation: "search" }],
+        },
+      ]);
+      const onChange = vi.fn();
+
+      render(
+        <EmailPermissionSection
+          agentId="agent-1"
+          connections={[makeEmailConnection("email-1", "Gmail Work", "google")]}
+          onChange={onChange}
+        />
+      );
+
+      await waitFor(() => {
+        const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1];
+        expect(lastCall[0]).toEqual({
+          connectionId: "email-1",
+          permissions: [{ model: "email", operation: "read" }],
+        });
+      });
+    });
+  });
+
   it("calls onChange when an operation is toggled", async () => {
     mockAgentPerms([
       {
