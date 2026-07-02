@@ -27,6 +27,10 @@ The app keeps existing even after you remove its last mailbox — it has an inde
 
 For the full picture of how connections, apps, and per-agent permissions fit together, see [Integrations](/concepts/integrations/).
 
+## Agents can work with attachments
+
+An agent with read access can also download an email's attachments into its own workspace — for example, saving an invoice PDF so it can read it and then file it on the matching record in Odoo. This uses the same read permission as listing and searching email; there's nothing extra to configure.
+
 ## Agents know their own mailbox
 
 An agent with email permissions automatically knows which mailbox it works with: the connected email address, the connection's name in Pinchy, and the operations you granted. Ask your agent which address it sends from and it can just answer — no extra setup needed. On shared agents, that identity is always the connected mailbox itself, not the personal address of whoever is chatting.
