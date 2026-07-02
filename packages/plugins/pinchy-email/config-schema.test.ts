@@ -79,9 +79,7 @@ describe("pinchy-email manifest contract", () => {
   });
 
   it("declares contracts.tools with all email tool names", () => {
-    const contracts = (manifest as Record<string, unknown>).contracts as
-      { tools?: string[] } | undefined;
-    expect(contracts?.tools?.toSorted()).toEqual([
+    expect(manifest.contracts?.tools?.slice().sort()).toEqual([
       "email_draft",
       "email_get_attachment",
       "email_list",

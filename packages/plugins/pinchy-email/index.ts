@@ -2,7 +2,7 @@ import { mkdir, writeFile, access } from "node:fs/promises";
 import { basename } from "node:path";
 import { GmailAdapter } from "./gmail-adapter.js";
 import { GraphAdapter } from "./graph-adapter.js";
-import type { EmailAdapter } from "./email-adapter.js";
+import type { EmailAdapter, Folder } from "./email-adapter.js";
 import { checkPermission, type Permissions } from "./permissions.js";
 
 // Filesystem convention shared with pinchy-odoo's odoo_attach_file: every
@@ -157,7 +157,10 @@ interface PluginConfig {
     {
       connectionId: string;
       permissions: Permissions;
-      tools: string[];
+      // Optional to match the manifest schema: pre-upgrade config entries were
+      // written without a tools field, and the plugin never reads it (tool
+      // gating is permissions-based).
+      tools?: string[];
     }
   >;
 }
@@ -165,7 +168,7 @@ interface PluginConfig {
 interface AgentEmailConfig {
   connectionId: string;
   permissions: Permissions;
-  tools: string[];
+  tools?: string[];
 }
 
 function getAgentConfig(
@@ -467,7 +470,7 @@ const plugin = {
 
               const result = await withAuthRetry(agentId, config, (adapter) =>
                 adapter.list({
-                  folder: params.folder as string | undefined,
+                  folder: params.folder as Folder | undefined,
                   limit: params.limit as number | undefined,
                   unreadOnly: params.unreadOnly as boolean | undefined,
                 }),
