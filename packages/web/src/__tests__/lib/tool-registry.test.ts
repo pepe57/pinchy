@@ -565,9 +565,7 @@ describe("Email operation helpers", () => {
     });
 
     it("ignores unknown operations", () => {
-      // "list" was never a real operation the UI or plugin recognised, unlike
-      // "search" below, which is a genuine legacy alias for "read".
-      expect(getEmailToolsForOperations(["list"])).toEqual([]);
+      expect(getEmailToolsForOperations(["bogus"])).toEqual([]);
     });
 
     // MIGRATION TEST (AGENTS.md § "Test Migrations Against Pre-Existing Data"):
@@ -598,6 +596,39 @@ describe("Email operation helpers", () => {
 
     it("legacy 'search' combined with explicit 'read' does not duplicate read tools", () => {
       expect(getEmailToolsForOperations(["read", "search"])).toEqual([
+        "email_list",
+        "email_read",
+        "email_search",
+        "email_get_attachment",
+      ]);
+    });
+
+    // MIGRATION TEST (AGENTS.md § "Test Migrations Against Pre-Existing Data"):
+    // "list" is the OTHER legacy per-tool operation pre-#328 template creation
+    // could persist (alongside "search" above), and unlike "search" it had NO
+    // alias at all until now — a standalone (email, "list") row derived an
+    // EMPTY toolset here, silently losing every email tool for that agent
+    // after upgrading, the exact failure mode the "search" alias was meant to
+    // prevent. "list" must derive the same toolset as "read", matching the
+    // plugin's own gate (email_list/email_read/email_search/
+    // email_get_attachment all check "read").
+    it("treats legacy 'list' operation as granting the read toolset (pre-#328 rows lacked a 'read' row)", () => {
+      expect(getEmailToolsForOperations(["list"])).toEqual([
+        "email_list",
+        "email_read",
+        "email_search",
+        "email_get_attachment",
+      ]);
+    });
+
+    it("legacy 'list' does not additionally unlock draft/send", () => {
+      const tools = getEmailToolsForOperations(["list"]);
+      expect(tools).not.toContain("email_draft");
+      expect(tools).not.toContain("email_send");
+    });
+
+    it("legacy 'list' combined with explicit 'read' does not duplicate read tools", () => {
+      expect(getEmailToolsForOperations(["read", "list"])).toEqual([
         "email_list",
         "email_read",
         "email_search",

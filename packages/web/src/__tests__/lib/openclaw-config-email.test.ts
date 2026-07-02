@@ -673,4 +673,86 @@ describe("pinchy-email config generation", () => {
     // that must tolerate this legacy shape (see permissions.ts).
     expect(agentConfig.permissions).toEqual({ email: ["search"] });
   });
+
+  // MIGRATION TEST (AGENTS.md § "Test Migrations Against Pre-Existing Data"):
+  // "list" is the OTHER legacy per-tool operation pre-#328 template creation
+  // stored directly as agent_connection_permissions rows (see
+  // ebe6b47a2's "Operation vocabulary mismatch" fix, which corrected the
+  // WRITE path via detectEmailOperations() but never touched rows that
+  // already existed). Unlike "search", "list" had NO alias at all until now —
+  // a legacy agent whose ONLY DB row is (email, "list") derived an EMPTY
+  // toolset AND a false "read" check, silently losing every email tool after
+  // upgrading. Simulates that exact pre-existing state (new code, old data)
+  // rather than starting from a clean read+list write, per the sibling guard
+  // to the test-skip/test-deletion policies.
+  it("derives the read toolset and a legacy-tolerant permissions object for an agent whose ONLY DB row is legacy 'list' (no 'read' row)", async () => {
+    const agentsData = [
+      {
+        id: "legacy-list-agent",
+        name: "Legacy List Agent",
+        model: "anthropic/claude-haiku-4-5-20251001",
+        allowedTools: [],
+        createdAt: new Date(),
+      },
+    ];
+
+    const permissionsData = [
+      {
+        agent_connection_permissions: {
+          agentId: "legacy-list-agent",
+          connectionId: "conn-google-legacy-list",
+          model: "email",
+          operation: "list",
+        },
+        integration_connections: {
+          id: "conn-google-legacy-list",
+          type: "google",
+          name: "Legacy Gmail",
+          description: "",
+          credentials: JSON.stringify({ accessToken: "secret-token" }),
+          data: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    ];
+
+    mockedDb.select.mockReturnValue({
+      from: vi.fn().mockImplementation(() =>
+        Object.assign(Promise.resolve(agentsData), {
+          innerJoin: vi.fn().mockReturnValue(
+            Object.assign(Promise.resolve(permissionsData), {
+              where: vi.fn().mockResolvedValue(permissionsData),
+            })
+          ),
+          where: vi.fn().mockResolvedValue([]),
+        })
+      ),
+    } as never);
+
+    mockedReadFileSync.mockReturnValue(
+      JSON.stringify({
+        gateway: { mode: "local", bind: "lan", auth: { token: "gw-token-123" } },
+      })
+    );
+
+    await regenerateOpenClawConfig();
+
+    const config = JSON.parse(getWrittenConfigString());
+    const agentConfig = config.plugins.entries["pinchy-email"].config.agents["legacy-list-agent"];
+
+    // The full read toolset must be emitted — a legacy list-only agent must
+    // not silently lose email_list/email_read/email_search/email_get_attachment.
+    expect(agentConfig.tools).toEqual(
+      expect.arrayContaining(["email_list", "email_read", "email_search", "email_get_attachment"])
+    );
+    // Never additionally grants draft/send from a bare "list" row.
+    expect(agentConfig.tools).not.toContain("email_draft");
+    expect(agentConfig.tools).not.toContain("email_send");
+
+    // The raw DB operation is passed through as-is (build.ts does not rewrite
+    // the stored permission rows) — the plugin's checkPermission is the layer
+    // that must tolerate this legacy shape (see permissions.ts).
+    expect(agentConfig.permissions).toEqual({ email: ["list"] });
+  });
 });

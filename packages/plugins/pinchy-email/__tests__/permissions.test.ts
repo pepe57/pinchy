@@ -64,6 +64,39 @@ describe("checkPermission", () => {
       );
     });
   });
+
+  // MIGRATION TEST (AGENTS.md § "Test Migrations Against Pre-Existing Data"):
+  // "list" is the OTHER legacy per-tool operation pre-#328 template creation
+  // could persist (alongside "search" above), and unlike "search" it had NO
+  // alias at all until now — a standalone (email, "list") row denied every
+  // read check, silently losing every email tool for that agent after
+  // upgrading, the exact failure mode the "search" alias was meant to
+  // prevent. Treat a granted "list" operation as satisfying a "read" check
+  // for the same reason as "search": it must NOT make "list" satisfy "draft"
+  // or "send".
+  describe("legacy 'list' operation (pre-#328 rows without a 'read' row)", () => {
+    it("grants the 'read' check when only a legacy 'list' operation is present", () => {
+      const legacyPermissions: Permissions = { email: ["list"] };
+      expect(checkPermission(legacyPermissions, "email", "read")).toBe(true);
+    });
+
+    it("does NOT grant 'draft' from a legacy 'list'-only grant", () => {
+      const legacyPermissions: Permissions = { email: ["list"] };
+      expect(checkPermission(legacyPermissions, "email", "draft")).toBe(false);
+    });
+
+    it("does NOT grant 'send' from a legacy 'list'-only grant", () => {
+      const legacyPermissions: Permissions = { email: ["list"] };
+      expect(checkPermission(legacyPermissions, "email", "send")).toBe(false);
+    });
+
+    it("does not itself answer true for a 'list' operation check unless explicitly granted", () => {
+      const readOnlyPermissions: Permissions = { email: ["read"] };
+      expect(checkPermission(readOnlyPermissions, "email", "list")).toBe(
+        false,
+      );
+    });
+  });
 });
 
 describe("getPermittedOperations", () => {
