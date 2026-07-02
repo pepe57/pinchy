@@ -113,20 +113,6 @@ async function refreshGoogleCredentials(
 // share the same Promise and receive the fresh token bundle.
 const inFlightMicrosoftRefreshes = new Map<string, Promise<MicrosoftCredentials>>();
 
-// Thrown when a Microsoft token refresh is actually required (the access token
-// is expired) but the OAuth app settings needed to perform that refresh are
-// missing. Unlike a failed refresh attempt (network/provider error, where the
-// still-valid-but-stale credentials are a reasonable fallback), there is no
-// credential to fall back to here that will actually work — the plugin would
-// cache a token doomed to fail on first use. The route surfaces this as a loud
-// 5xx rather than silently returning expired credentials with a 200.
-class MicrosoftOAuthSettingsMissingError extends Error {
-  constructor() {
-    super("Microsoft OAuth settings not configured");
-    this.name = "MicrosoftOAuthSettingsMissingError";
-  }
-}
-
 async function refreshMicrosoftCredentials(
   connectionId: string,
   current: MicrosoftCredentials
@@ -139,7 +125,7 @@ async function refreshMicrosoftCredentials(
       const oauthSettings = await getOAuthSettings("microsoft");
       if (!oauthSettings) {
         console.error("Microsoft OAuth token refresh failed: OAuth settings not configured");
-        throw new MicrosoftOAuthSettingsMissingError();
+        throw new OAuthSettingsMissingError("Microsoft");
       }
 
       const refreshed = await refreshMsAccessToken({
@@ -170,7 +156,7 @@ async function refreshMicrosoftCredentials(
       console.log("Refreshed Microsoft OAuth token for connection", connectionId);
       return updated;
     } catch (err) {
-      if (err instanceof MicrosoftOAuthSettingsMissingError) {
+      if (err instanceof OAuthSettingsMissingError) {
         // Re-throw: there is no safe stale fallback when settings are missing
         // and a refresh is required (see class comment above).
         throw err;
@@ -260,14 +246,13 @@ export async function GET(
         credentials as MicrosoftCredentials
       );
     } catch (err) {
-      if (err instanceof MicrosoftOAuthSettingsMissingError) {
+      if (err instanceof OAuthSettingsMissingError) {
         // The access token is expired and there is no way to refresh it —
         // fail loudly instead of returning a 200 with stale/expired tokens
         // that the plugin would cache for another 5 minutes and fail on.
         return NextResponse.json(
           {
-            error:
-              "Microsoft OAuth settings missing — reconnect the mailbox or restore the OAuth app",
+            error: `${err.provider} OAuth settings missing — reconnect the mailbox or restore the OAuth app`,
           },
           { status: 503 }
         );
