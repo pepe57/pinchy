@@ -1,5 +1,6 @@
 import type {
   EmailAdapter,
+  EmailAttachment,
   Folder,
   ListOptions,
   SearchOptions,
@@ -21,7 +22,10 @@ const SUMMARY_SELECT =
 
 function mapFolder(f: Folder): string {
   const g = FOLDER_TO_GRAPH[f];
-  if (!g) throw new Error(`unknown folder: ${f}. Valid: INBOX, SENT, DRAFTS, TRASH, SPAM.`);
+  if (!g)
+    throw new Error(
+      `unknown folder: ${f}. Valid: INBOX, SENT, DRAFTS, TRASH, SPAM.`,
+    );
   return g;
 }
 
@@ -43,11 +47,28 @@ interface GraphMessage {
   isRead: boolean;
 }
 
+// A Graph attachment collection item. `@odata.type` distinguishes fileAttachment
+// (has downloadable contentBytes) from itemAttachment / referenceAttachment
+// (embedded messages / cloud links, which cannot be downloaded as bytes).
+interface GraphAttachment {
+  "@odata.type"?: string;
+  id: string;
+  name: string | null;
+  contentType: string | null;
+  size: number | null;
+  isInline: boolean;
+  contentBytes?: string | null;
+}
+
+const FILE_ATTACHMENT_TYPE = "#microsoft.graph.fileAttachment";
+
 function toSummary(m: GraphMessage): EmailSummary {
   return {
     id: m.id,
     from: m.from?.emailAddress?.address ?? "",
-    to: m.toRecipients?.map((r) => r.emailAddress?.address ?? "").join(", ") ?? "",
+    to:
+      m.toRecipients?.map((r) => r.emailAddress?.address ?? "").join(", ") ??
+      "",
     subject: m.subject ?? "",
     date: m.receivedDateTime ?? "",
     snippet: m.bodyPreview ?? "",
@@ -88,7 +109,8 @@ export class GraphAdapter implements EmailAdapter {
       `$select=${encodeURIComponent(SUMMARY_SELECT)}`,
       `$orderby=${encodeURIComponent("receivedDateTime desc")}`,
     ];
-    if (opts.unreadOnly) parts.push(`$filter=${encodeURIComponent("isRead eq false")}`);
+    if (opts.unreadOnly)
+      parts.push(`$filter=${encodeURIComponent("isRead eq false")}`);
     const res = await this.req(`${path}?${parts.join("&")}`);
     const data = (await res.json()) as { value: GraphMessage[] };
     return data.value.map(toSummary);
@@ -97,7 +119,7 @@ export class GraphAdapter implements EmailAdapter {
   async read(id: string): Promise<EmailFull> {
     const params = new URLSearchParams({
       $select:
-        "id,subject,bodyPreview,receivedDateTime,from,toRecipients,ccRecipients,isRead,body",
+        "id,subject,bodyPreview,receivedDateTime,from,toRecipients,ccRecipients,isRead,body,hasAttachments",
     });
     const res = await this.req(
       `/me/messages/${encodeURIComponent(id)}?${params.toString()}`,
@@ -105,11 +127,58 @@ export class GraphAdapter implements EmailAdapter {
     const m = (await res.json()) as GraphMessage & {
       ccRecipients?: Array<{ emailAddress?: { address?: string } }>;
       body?: { contentType?: string; content?: string };
+      hasAttachments?: boolean;
     };
     return {
       ...toSummary(m),
-      cc: m.ccRecipients?.map((r) => r.emailAddress?.address ?? "").join(", ") ?? "",
+      cc:
+        m.ccRecipients?.map((r) => r.emailAddress?.address ?? "").join(", ") ??
+        "",
       body: m.body?.content ?? "",
+      // Only pay for the second round trip when the message actually has
+      // attachments — the common no-attachment case stays a single request.
+      attachments: m.hasAttachments ? await this.listAttachments(id) : [],
+    };
+  }
+
+  private async listAttachments(messageId: string): Promise<EmailAttachment[]> {
+    const params = new URLSearchParams({
+      $select: "id,name,contentType,size,isInline",
+    });
+    const res = await this.req(
+      `/me/messages/${encodeURIComponent(messageId)}/attachments?${params.toString()}`,
+    );
+    const data = (await res.json()) as { value: GraphAttachment[] };
+    return data.value
+      .filter((a) => !a.isInline && a["@odata.type"] === FILE_ATTACHMENT_TYPE)
+      .map((a) => ({
+        id: a.id,
+        filename: a.name ?? "",
+        mimeType: a.contentType ?? "application/octet-stream",
+        size: a.size ?? 0,
+      }));
+  }
+
+  async getAttachment(
+    messageId: string,
+    attachmentId: string,
+  ): Promise<{ filename: string; mimeType: string; data: Buffer }> {
+    const res = await this.req(
+      `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    );
+    const a = (await res.json()) as GraphAttachment;
+    if (a.contentBytes == null) {
+      throw new Error(
+        `attachment ${attachmentId} is an embedded item (e.g. an attached email or a cloud reference) ` +
+          `and cannot be downloaded as a file.`,
+      );
+    }
+    // Graph fileAttachment.contentBytes is standard base64 (not base64url).
+    const data = Buffer.from(a.contentBytes, "base64");
+    return {
+      filename: a.name ?? "",
+      mimeType: a.contentType ?? "application/octet-stream",
+      data,
     };
   }
 
@@ -121,7 +190,9 @@ export class GraphAdapter implements EmailAdapter {
     if (opts.subject) searchTerms.push(`subject:${opts.subject}`);
     if (opts.unread) filters.push("isRead eq false");
     if (opts.sinceDays != null) {
-      const cutoff = new Date(Date.now() - opts.sinceDays * 86_400_000).toISOString();
+      const cutoff = new Date(
+        Date.now() - opts.sinceDays * 86_400_000,
+      ).toISOString();
       filters.push(`receivedDateTime ge ${cutoff}`);
     }
     if (searchTerms.length === 0 && filters.length === 0) {
@@ -138,10 +209,16 @@ export class GraphAdapter implements EmailAdapter {
     if (searchTerms.length > 0 && filters.length > 0) {
       // Microsoft Graph v1.0 does not allow $search and $filter together.
       // Convert text terms to OData $filter predicates instead.
-      if (opts.from) filters.push(`from/emailAddress/address eq '${odataString(opts.from)}'`);
+      if (opts.from)
+        filters.push(
+          `from/emailAddress/address eq '${odataString(opts.from)}'`,
+        );
       if (opts.to)
-        filters.push(`toRecipients/any(r: r/emailAddress/address eq '${odataString(opts.to)}')`);
-      if (opts.subject) filters.push(`contains(subject, '${odataString(opts.subject)}')`);
+        filters.push(
+          `toRecipients/any(r: r/emailAddress/address eq '${odataString(opts.to)}')`,
+        );
+      if (opts.subject)
+        filters.push(`contains(subject, '${odataString(opts.subject)}')`);
       params.set("$filter", filters.join(" and "));
       params.set("$orderby", "receivedDateTime desc");
     } else if (searchTerms.length > 0) {
