@@ -194,6 +194,27 @@ test.describe("Microsoft email dispatch probe (pinchy-email plugin coverage)", (
     // 3. Login (API cookie).
     dispatchCookie = await login();
 
+    // 3b. Save Microsoft OAuth app settings — a real prerequisite this fixture
+    //     must model. createMicrosoftConnectionInDb seeds an ALREADY-EXPIRED
+    //     access token specifically so the credentials route's refresh path
+    //     runs on first use. Without app-level settings (clientId/clientSecret),
+    //     the credentials route now fails loudly (503) instead of silently
+    //     serving the stale token — matching production, where a Microsoft
+    //     connection cannot exist without the admin having configured the
+    //     OAuth app first. graph-mock's token endpoint does not validate the
+    //     client secret value, so any non-empty strings work here.
+    const oauthSettingsRes = await pinchyPost(
+      "/api/settings/oauth",
+      {
+        provider: "microsoft",
+        clientId: "e2e-test-client-id",
+        clientSecret: "e2e-test-client-secret",
+      },
+      dispatchCookie
+    );
+    if (oauthSettingsRes.status !== 200)
+      throw new Error(`Microsoft OAuth settings save failed: ${String(oauthSettingsRes.status)}`);
+
     // 4. Create Microsoft connection so the agent config includes the plugin block.
     const conn = await createMicrosoftConnectionInDb("E2E Microsoft Dispatch");
     dispatchConnectionId = conn.id;
@@ -248,6 +269,7 @@ test.describe("Microsoft email dispatch probe (pinchy-email plugin coverage)", (
     if (dispatchConnectionId) {
       await pinchyDelete(`/api/integrations/${dispatchConnectionId}`, dispatchCookie);
     }
+    await pinchyDelete("/api/settings/oauth?provider=microsoft", dispatchCookie);
     if (restoreSettings) await restoreSettings();
     await stopFakeOllama();
   });
