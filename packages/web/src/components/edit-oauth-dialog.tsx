@@ -142,7 +142,7 @@ export function EditOAuthDialog({ provider, open, onOpenChange }: EditOAuthDialo
                   id="edit-tenant-id"
                   value={tenantId}
                   onChange={(e) => setTenantId(e.target.value)}
-                  placeholder="Leave blank for common (multi-tenant)"
+                  placeholder="Optional — leave blank to allow any work/school account"
                 />
               </div>
             )}
