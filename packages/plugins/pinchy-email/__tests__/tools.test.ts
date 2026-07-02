@@ -873,6 +873,7 @@ describe("email_get_attachment", () => {
     expect(mockWriteFile).toHaveBeenCalledWith(
       "/root/.openclaw/workspaces/agent-1/uploads/invoice.pdf",
       data,
+      { flag: "wx" },
     );
 
     const payload = JSON.parse(result.content[0].text);
@@ -1035,8 +1036,10 @@ describe("email_get_attachment", () => {
     expect(mockWriteFile).toHaveBeenCalledWith(
       "/root/.openclaw/workspaces/agent-1/uploads/invoice-1.pdf",
       expect.anything(),
+      { flag: "wx" },
     );
-    // Never overwrite: writeFile must only ever be called with the free name.
+    // Never overwrite: writeFile must only ever be called with the free name,
+    // and the exclusive "wx" flag makes that guarantee atomic.
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
   });
 

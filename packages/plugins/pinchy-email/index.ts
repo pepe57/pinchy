@@ -827,7 +827,12 @@ const plugin = {
                 );
               }
 
-              await writeFile(filePath, attachment.data);
+              // Exclusive create ("wx"): fail rather than overwrite if the name
+              // now exists (closes the TOCTOU window after pickUniqueFilename)
+              // and refuse to follow a pre-existing symlink at the target — a
+              // downloaded attachment must never clobber an existing workspace
+              // file or be redirected outside uploads/ via a planted symlink.
+              await writeFile(filePath, attachment.data, { flag: "wx" });
 
               return {
                 content: [
