@@ -33,4 +33,22 @@ describe("EmailAdapter contract", () => {
     expectTypeOf<EmailAdapter["draft"]>().toBeFunction();
     expectTypeOf<EmailAdapter["send"]>().toBeFunction();
   });
+
+  it("EmailFull carries attachment metadata", () => {
+    expectTypeOf<EmailFull["attachments"]>().toEqualTypeOf<
+      Array<{ id: string; filename: string; mimeType: string; size: number }>
+    >();
+  });
+
+  it("EmailAdapter has a getAttachment method that downloads attachment bytes", () => {
+    expectTypeOf<EmailAdapter["getAttachment"]>().toBeFunction();
+    expectTypeOf<EmailAdapter["getAttachment"]>().parameters.toEqualTypeOf<
+      [string, string]
+    >();
+    expectTypeOf<EmailAdapter["getAttachment"]>().returns.resolves.toEqualTypeOf<{
+      filename: string;
+      mimeType: string;
+      data: Buffer;
+    }>();
+  });
 });

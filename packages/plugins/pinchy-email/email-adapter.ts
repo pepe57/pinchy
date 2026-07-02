@@ -10,9 +10,17 @@ export interface EmailSummary {
   unread: boolean;
 }
 
+export interface EmailAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface EmailFull extends EmailSummary {
   cc: string;
   body: string;
+  attachments: EmailAttachment[];
 }
 
 export interface ListOptions {
@@ -44,4 +52,8 @@ export interface EmailAdapter {
   search(opts: SearchOptions): Promise<EmailSummary[]>;
   draft(opts: ComposeOptions): Promise<{ draftId: string }>;
   send(opts: ComposeOptions): Promise<{ messageId: string }>;
+  getAttachment(
+    messageId: string,
+    attachmentId: string
+  ): Promise<{ filename: string; mimeType: string; data: Buffer }>;
 }
