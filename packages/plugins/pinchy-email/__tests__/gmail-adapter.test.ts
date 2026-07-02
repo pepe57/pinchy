@@ -6,6 +6,7 @@ const mockList = vi.fn();
 const mockGet = vi.fn();
 const mockDraftsCreate = vi.fn();
 const mockSend = vi.fn();
+const mockAttachmentsGet = vi.fn();
 
 // Mock googleapis. `google.auth.OAuth2` is invoked with `new` in
 // gmail-adapter.ts, so the mock must expose a real (constructable) class,
@@ -24,6 +25,9 @@ vi.mock("googleapis", () => {
             list: mockList,
             get: mockGet,
             send: mockSend,
+            attachments: {
+              get: mockAttachmentsGet,
+            },
           },
           drafts: {
             create: mockDraftsCreate,
@@ -202,6 +206,7 @@ describe("GmailAdapter", () => {
         snippet: "Hello there",
         unread: true,
         body: "Hello, this is the body.",
+        attachments: [],
       });
 
       expect(mockGet).toHaveBeenCalledWith({
@@ -347,6 +352,311 @@ describe("GmailAdapter", () => {
     });
   });
 
+  describe("read attachments", () => {
+    it("lists attachment metadata from parts with a filename and attachmentId", async () => {
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-att",
+          snippet: "Invoice",
+          labelIds: ["INBOX"],
+          payload: {
+            mimeType: "multipart/mixed",
+            parts: [
+              {
+                mimeType: "text/plain",
+                body: { data: base64url("See attached invoice") },
+              },
+              {
+                mimeType: "application/pdf",
+                filename: "invoice.pdf",
+                body: { attachmentId: "att-abc", size: 12345 },
+              },
+            ],
+            headers: [
+              { name: "From", value: "billing@example.com" },
+              { name: "To", value: "bob@example.com" },
+              { name: "Subject", value: "Invoice" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+
+      const result = await adapter.read("msg-att");
+
+      expect(result.attachments).toEqual([
+        {
+          id: "att-abc",
+          filename: "invoice.pdf",
+          mimeType: "application/pdf",
+          size: 12345,
+        },
+      ]);
+      expect(result.body).toBe("See attached invoice");
+    });
+
+    it("collects attachments from deeply nested multipart parts", async () => {
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-nested-att",
+          snippet: "Nested",
+          labelIds: [],
+          payload: {
+            mimeType: "multipart/mixed",
+            parts: [
+              {
+                mimeType: "multipart/alternative",
+                parts: [
+                  { mimeType: "text/plain", body: { data: base64url("body") } },
+                ],
+              },
+              {
+                mimeType: "multipart/mixed",
+                parts: [
+                  {
+                    mimeType: "application/pdf",
+                    filename: "deep.pdf",
+                    body: { attachmentId: "att-deep", size: 42 },
+                  },
+                ],
+              },
+            ],
+            headers: [
+              { name: "From", value: "a@b.com" },
+              { name: "To", value: "c@d.com" },
+              { name: "Subject", value: "Nested" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+
+      const result = await adapter.read("msg-nested-att");
+
+      expect(result.attachments).toEqual([
+        {
+          id: "att-deep",
+          filename: "deep.pdf",
+          mimeType: "application/pdf",
+          size: 42,
+        },
+      ]);
+    });
+
+    it("skips inline parts that have an attachmentId but no filename", async () => {
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-inline",
+          snippet: "Inline image",
+          labelIds: [],
+          payload: {
+            mimeType: "multipart/related",
+            parts: [
+              {
+                mimeType: "text/html",
+                body: { data: base64url("<img src=cid:x>") },
+              },
+              {
+                // Inline image: attachmentId present, but no filename → not a
+                // user-facing attachment.
+                mimeType: "image/png",
+                filename: "",
+                body: { attachmentId: "att-inline", size: 999 },
+              },
+            ],
+            headers: [
+              { name: "From", value: "a@b.com" },
+              { name: "To", value: "c@d.com" },
+              { name: "Subject", value: "Inline" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+
+      const result = await adapter.read("msg-inline");
+
+      expect(result.attachments).toEqual([]);
+    });
+
+    it("returns an empty attachments array for a plain single-part message", async () => {
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-plain",
+          snippet: "Plain",
+          labelIds: [],
+          payload: {
+            mimeType: "text/plain",
+            body: { data: base64url("just text") },
+            headers: [
+              { name: "From", value: "a@b.com" },
+              { name: "To", value: "c@d.com" },
+              { name: "Subject", value: "Plain" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+
+      const result = await adapter.read("msg-plain");
+
+      expect(result.attachments).toEqual([]);
+    });
+
+    it("defaults size to 0 when the part body omits it", async () => {
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-nosize",
+          snippet: "No size",
+          labelIds: [],
+          payload: {
+            mimeType: "multipart/mixed",
+            parts: [
+              {
+                mimeType: "application/octet-stream",
+                filename: "data.bin",
+                body: { attachmentId: "att-nosize" },
+              },
+            ],
+            headers: [
+              { name: "From", value: "a@b.com" },
+              { name: "To", value: "c@d.com" },
+              { name: "Subject", value: "No size" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+
+      const result = await adapter.read("msg-nosize");
+
+      expect(result.attachments).toEqual([
+        {
+          id: "att-nosize",
+          filename: "data.bin",
+          mimeType: "application/octet-stream",
+          size: 0,
+        },
+      ]);
+    });
+  });
+
+  describe("getAttachment", () => {
+    it("downloads bytes and resolves filename/mimeType by re-reading the message", async () => {
+      // getAttachment first re-fetches the message to recover filename/mimeType
+      // (the attachments.get endpoint returns only {size, data}), then fetches
+      // the bytes.
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-dl",
+          snippet: "Invoice",
+          labelIds: [],
+          payload: {
+            mimeType: "multipart/mixed",
+            parts: [
+              { mimeType: "text/plain", body: { data: base64url("body") } },
+              {
+                mimeType: "application/pdf",
+                filename: "invoice.pdf",
+                body: { attachmentId: "att-dl", size: 5 },
+              },
+            ],
+            headers: [
+              { name: "From", value: "a@b.com" },
+              { name: "To", value: "c@d.com" },
+              { name: "Subject", value: "Invoice" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+      mockAttachmentsGet.mockResolvedValue({
+        data: { size: 5, data: Buffer.from("%PDF-").toString("base64url") },
+      });
+
+      const result = await adapter.getAttachment("msg-dl", "att-dl");
+
+      expect(result.filename).toBe("invoice.pdf");
+      expect(result.mimeType).toBe("application/pdf");
+      expect(Buffer.isBuffer(result.data)).toBe(true);
+      expect(result.data.toString("utf-8")).toBe("%PDF-");
+
+      expect(mockAttachmentsGet).toHaveBeenCalledWith({
+        userId: "me",
+        messageId: "msg-dl",
+        id: "att-dl",
+      });
+    });
+
+    it("decodes base64url (URL-safe alphabet), not standard base64", async () => {
+      // Bytes 0xFB 0xFF 0xBF encode to "-_-_" in base64url but "+/+/" in
+      // standard base64 — decoding with the wrong alphabet corrupts the data.
+      const bytes = Buffer.from([0xfb, 0xff, 0xbf]);
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-b64",
+          snippet: "x",
+          labelIds: [],
+          payload: {
+            mimeType: "multipart/mixed",
+            parts: [
+              {
+                mimeType: "application/octet-stream",
+                filename: "raw.bin",
+                body: { attachmentId: "att-b64", size: bytes.length },
+              },
+            ],
+            headers: [
+              { name: "From", value: "a@b.com" },
+              { name: "To", value: "c@d.com" },
+              { name: "Subject", value: "x" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+      mockAttachmentsGet.mockResolvedValue({
+        data: { size: bytes.length, data: bytes.toString("base64url") },
+      });
+
+      const result = await adapter.getAttachment("msg-b64", "att-b64");
+
+      expect(Array.from(result.data)).toEqual([0xfb, 0xff, 0xbf]);
+    });
+
+    it("throws a re-read hint when the attachmentId is not in the message", async () => {
+      mockGet.mockResolvedValue({
+        data: {
+          id: "msg-stale",
+          snippet: "x",
+          labelIds: [],
+          payload: {
+            mimeType: "multipart/mixed",
+            parts: [
+              {
+                mimeType: "application/pdf",
+                filename: "current.pdf",
+                body: { attachmentId: "att-current", size: 1 },
+              },
+            ],
+            headers: [
+              { name: "From", value: "a@b.com" },
+              { name: "To", value: "c@d.com" },
+              { name: "Subject", value: "x" },
+              { name: "Date", value: "Mon, 7 Apr 2026 10:00:00 +0000" },
+            ],
+          },
+        },
+      });
+
+      await expect(
+        adapter.getAttachment("msg-stale", "att-gone"),
+      ).rejects.toThrow(/re-read/i);
+      // Must not attempt the bytes fetch when the id can't be resolved.
+      expect(mockAttachmentsGet).not.toHaveBeenCalled();
+    });
+  });
+
   describe("search", () => {
     it("builds Gmail query from DSL fields", async () => {
       mockList.mockResolvedValue({ data: { messages: [] } });
@@ -376,13 +686,15 @@ describe("GmailAdapter", () => {
     it("maps canonical folders to Gmail label IDs", async () => {
       mockList.mockResolvedValue({ data: { messages: [] } });
       await adapter.list({ folder: "DRAFTS", limit: 5 });
-      expect(mockList).toHaveBeenCalledWith(expect.objectContaining({ labelIds: ["DRAFT"] }));
+      expect(mockList).toHaveBeenCalledWith(
+        expect.objectContaining({ labelIds: ["DRAFT"] }),
+      );
     });
 
     it("rejects custom folder names", async () => {
-      await expect(adapter.list({ folder: "CUSTOM_LABEL" as never })).rejects.toThrow(
-        /unknown folder/i,
-      );
+      await expect(
+        adapter.list({ folder: "CUSTOM_LABEL" as never }),
+      ).rejects.toThrow(/unknown folder/i);
     });
   });
 
@@ -396,7 +708,9 @@ describe("GmailAdapter", () => {
         sinceDays: 7,
       });
       expect(mockList).toHaveBeenCalledWith(
-        expect.objectContaining({ q: "from:alice@example.com subject:invoice is:unread newer_than:7d" }),
+        expect.objectContaining({
+          q: "from:alice@example.com subject:invoice is:unread newer_than:7d",
+        }),
       );
     });
 
@@ -464,7 +778,10 @@ describe("GmailAdapter", () => {
 
       // Verify the raw message content
       const call = mockDraftsCreate.mock.calls[0][0];
-      const raw = Buffer.from(call.requestBody.message.raw, "base64url").toString("utf-8");
+      const raw = Buffer.from(
+        call.requestBody.message.raw,
+        "base64url",
+      ).toString("utf-8");
       expect(raw).toContain("To: bob@example.com");
       expect(raw).toContain("Subject: Draft subject");
       expect(raw).toContain("Draft body");
@@ -483,7 +800,10 @@ describe("GmailAdapter", () => {
       });
 
       const call = mockDraftsCreate.mock.calls[0][0];
-      const raw = Buffer.from(call.requestBody.message.raw, "base64url").toString("utf-8");
+      const raw = Buffer.from(
+        call.requestBody.message.raw,
+        "base64url",
+      ).toString("utf-8");
       expect(raw).toContain("In-Reply-To: <original-msg-id@example.com>");
     });
   });
@@ -511,7 +831,9 @@ describe("GmailAdapter", () => {
 
       // Verify the raw message content
       const call = mockSend.mock.calls[0][0];
-      const raw = Buffer.from(call.requestBody.raw, "base64url").toString("utf-8");
+      const raw = Buffer.from(call.requestBody.raw, "base64url").toString(
+        "utf-8",
+      );
       expect(raw).toContain("To: bob@example.com");
       expect(raw).toContain("Subject: Sent subject");
       expect(raw).toContain("Sent body");
@@ -530,7 +852,9 @@ describe("GmailAdapter", () => {
       });
 
       const call = mockSend.mock.calls[0][0];
-      const raw = Buffer.from(call.requestBody.raw, "base64url").toString("utf-8");
+      const raw = Buffer.from(call.requestBody.raw, "base64url").toString(
+        "utf-8",
+      );
       expect(raw).toContain("In-Reply-To: <thread-id@example.com>");
     });
   });
@@ -542,7 +866,10 @@ describe("GmailAdapter", () => {
 
     function getRawLines(mockFn: ReturnType<typeof vi.fn>): string[] {
       const call = mockFn.mock.calls[0][0];
-      const raw = Buffer.from(call.requestBody.message.raw, "base64url").toString("utf-8");
+      const raw = Buffer.from(
+        call.requestBody.message.raw,
+        "base64url",
+      ).toString("utf-8");
       return raw.split("\r\n");
     }
 

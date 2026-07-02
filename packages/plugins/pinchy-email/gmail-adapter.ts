@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import type {
   EmailAdapter,
+  EmailAttachment,
   Folder,
   ListOptions,
   SearchOptions,
@@ -21,7 +22,10 @@ const FOLDER_TO_GMAIL_LABEL: Record<Folder, string> = {
 
 function mapFolder(f: Folder): string {
   const label = FOLDER_TO_GMAIL_LABEL[f];
-  if (!label) throw new Error(`unknown folder: ${f}. Valid: INBOX, SENT, DRAFTS, TRASH, SPAM.`);
+  if (!label)
+    throw new Error(
+      `unknown folder: ${f}. Valid: INBOX, SENT, DRAFTS, TRASH, SPAM.`,
+    );
   return label;
 }
 
@@ -30,14 +34,17 @@ function buildGmailQuery(opts: SearchOptions): string {
   // Escape backslashes BEFORE quotes so a trailing "\" can't escape the closing
   // quote (e.g. `foo\` → `"foo\\"`, not the broken `"foo\"`).
   const quote = (v: string) =>
-    /[\s"\\]/.test(v) ? `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : v;
+    /[\s"\\]/.test(v)
+      ? `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+      : v;
   if (opts.from) parts.push(`from:${quote(opts.from)}`);
   if (opts.to) parts.push(`to:${quote(opts.to)}`);
   if (opts.subject) parts.push(`subject:${quote(opts.subject)}`);
   if (opts.unread) parts.push("is:unread");
   if (opts.sinceDays != null) parts.push(`newer_than:${opts.sinceDays}d`);
   if (opts.folder) parts.push(`label:${mapFolder(opts.folder)}`);
-  if (parts.length === 0) throw new Error("search requires at least one filter field");
+  if (parts.length === 0)
+    throw new Error("search requires at least one filter field");
   return parts.join(" ");
 }
 
@@ -50,7 +57,11 @@ export class GmailAdapter implements EmailAdapter {
     // GMAIL_API_BASE_URL allows E2E tests to redirect gmail API calls to a
     // local mock server instead of https://gmail.googleapis.com/
     const rootUrl = process.env.GMAIL_API_BASE_URL;
-    this.gmail = google.gmail({ version: "v1", auth, ...(rootUrl ? { rootUrl } : {}) });
+    this.gmail = google.gmail({
+      version: "v1",
+      auth,
+      ...(rootUrl ? { rootUrl } : {}),
+    });
   }
 
   async list(opts: ListOptions): Promise<EmailSummary[]> {
@@ -71,7 +82,10 @@ export class GmailAdapter implements EmailAdapter {
     });
 
     const data = response.data;
-    if (!data.payload) throw new Error(`Gmail API returned message without payload for id: ${id}`);
+    if (!data.payload)
+      throw new Error(
+        `Gmail API returned message without payload for id: ${id}`,
+      );
     const payload = data.payload;
 
     return {
@@ -84,6 +98,46 @@ export class GmailAdapter implements EmailAdapter {
       snippet: data.snippet ?? "",
       unread: data.labelIds?.includes("UNREAD") ?? false,
       body: extractBody(payload),
+      attachments: collectAttachments(payload),
+    };
+  }
+
+  async getAttachment(
+    messageId: string,
+    attachmentId: string,
+  ): Promise<{ filename: string; mimeType: string; data: Buffer }> {
+    // The attachments.get endpoint returns only { size, data } — no filename or
+    // mimeType — so we re-read the message and locate the part carrying this
+    // attachmentId to recover them. Gmail attachment ids are not stable across
+    // calls, so a miss here means the caller is holding a stale id.
+    const message = await this.gmail.users.messages.get({
+      userId: "me",
+      id: messageId,
+      format: "full",
+    });
+    const payload = message.data.payload;
+    const part = payload ? findAttachmentPart(payload, attachmentId) : null;
+    if (!part) {
+      throw new Error(
+        `attachment ${attachmentId} not found on message ${messageId}. ` +
+          `Gmail attachment ids change between reads — re-read the message to get fresh attachment ids.`,
+      );
+    }
+
+    const response = await this.gmail.users.messages.attachments.get({
+      userId: "me",
+      messageId,
+      id: attachmentId,
+    });
+    const encoded = response.data.data ?? "";
+    // Gmail returns base64url (URL-safe alphabet); decode explicitly with that
+    // alphabet rather than Node's lenient "base64" decoder.
+    const data = Buffer.from(encoded, "base64url");
+
+    return {
+      filename: part.filename ?? "",
+      mimeType: part.mimeType ?? "application/octet-stream",
+      data,
     };
   }
 
@@ -158,7 +212,8 @@ export class GmailAdapter implements EmailAdapter {
 }
 
 function getHeader(
-  headers: Array<{ name?: string | null; value?: string | null }> | undefined | null,
+  headers:
+    Array<{ name?: string | null; value?: string | null }> | undefined | null,
   name: string,
 ): string {
   return headers?.find((h) => h.name === name)?.value ?? "";
@@ -166,8 +221,53 @@ function getHeader(
 
 interface MimePart {
   mimeType?: string | null;
-  body?: { data?: string | null } | null;
+  filename?: string | null;
+  body?: {
+    data?: string | null;
+    attachmentId?: string | null;
+    size?: number | null;
+  } | null;
   parts?: MimePart[] | null;
+}
+
+// Walk the MIME tree and collect every part that is a real attachment: it has
+// both an attachmentId (downloadable via attachments.get) AND a non-empty
+// filename. Requiring a filename naturally skips inline images and other
+// content-only parts, which Gmail exposes without one.
+function collectAttachments(
+  part: MimePart,
+  acc: EmailAttachment[] = [],
+): EmailAttachment[] {
+  const attachmentId = part.body?.attachmentId;
+  if (attachmentId && part.filename) {
+    acc.push({
+      id: attachmentId,
+      filename: part.filename,
+      mimeType: part.mimeType ?? "application/octet-stream",
+      size: part.body?.size ?? 0,
+    });
+  }
+  if (part.parts) {
+    for (const child of part.parts) collectAttachments(child, acc);
+  }
+  return acc;
+}
+
+// Locate the part carrying a given attachmentId anywhere in the MIME tree.
+// Used by getAttachment to recover filename/mimeType, which the attachments.get
+// endpoint does not return.
+function findAttachmentPart(
+  part: MimePart,
+  attachmentId: string,
+): MimePart | null {
+  if (part.body?.attachmentId === attachmentId) return part;
+  if (part.parts) {
+    for (const child of part.parts) {
+      const found = findAttachmentPart(child, attachmentId);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function extractBody(payload: MimePart): string {
