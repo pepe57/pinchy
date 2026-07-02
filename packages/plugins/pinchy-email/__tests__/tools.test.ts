@@ -777,6 +777,37 @@ describe("email_send", () => {
       replyTo: undefined,
     });
   });
+
+  it("reports a direct send honestly when the adapter returns messageId: null (Graph's 202-with-no-location case) instead of fabricating an empty id", async () => {
+    mockSend.mockResolvedValue({ messageId: null });
+
+    const configWithSend: PluginConfig = {
+      ...testConfig,
+      agents: {
+        "agent-1": {
+          connectionId: "conn-1",
+          permissions: { email: ["read", "draft", "send"] },
+        },
+      },
+    };
+    const tools = createApi(configWithSend);
+    const tool = findTool(tools, "email_send", agentId)!;
+
+    const result = await tool.execute("call-1", {
+      to: "recipient@test.com",
+      subject: "Sent Subject",
+      body: "Sent body text",
+    });
+
+    const data = JSON.parse(result.content[0].text);
+    // The result must not silently claim a fabricated "" id — either the
+    // field is absent/null, or the surrounding text makes clear no id is
+    // available. It must NOT be an empty string standing in as a fake id.
+    expect(data.messageId).not.toBe("");
+    expect(data.messageId).toBeNull();
+    const allText = result.content.map((c) => c.text).join("\n");
+    expect(allText).toMatch(/sent/i);
+  });
 });
 
 describe("error handling", () => {

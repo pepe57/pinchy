@@ -725,11 +725,22 @@ const plugin = {
                 }),
               );
 
-              return {
-                content: [
-                  { type: "text", text: JSON.stringify(result, null, 2) },
-                ],
-              };
+              const content: ContentBlock[] = [
+                { type: "text", text: JSON.stringify(result, null, 2) },
+              ];
+              // Some providers (Microsoft Graph, for a direct non-reply send)
+              // do not return a real message id for the sent message — the
+              // send API answers 202 Accepted with no Location header. Report
+              // that honestly instead of letting the bare `messageId: null`
+              // JSON read like a failure.
+              if (result.messageId == null) {
+                content.push({
+                  type: "text",
+                  text: "The email was sent successfully. This provider did not return a message id for the sent message.",
+                });
+              }
+
+              return { content };
             } catch (error) {
               return errorResult(error);
             }

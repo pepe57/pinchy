@@ -577,6 +577,21 @@ describe("GraphAdapter.send", () => {
     );
   });
 
+  it("send({to,subject,body}) returns messageId: null — Graph's /sendMail answers 202 with no location header, so there is no real id to report", async () => {
+    const adapter = new GraphAdapter({ accessToken: "tok" });
+    (fetch as Mock).mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => null },
+      json: async () => ({}),
+    });
+    const result = await adapter.send({
+      to: "bob@example.com",
+      subject: "Test",
+      body: "Hello",
+    });
+    expect(result).toEqual({ messageId: null });
+  });
+
   it("send({...,replyTo}) creates draft + sends it", async () => {
     const adapter = new GraphAdapter({ accessToken: "tok" });
     (fetch as Mock)

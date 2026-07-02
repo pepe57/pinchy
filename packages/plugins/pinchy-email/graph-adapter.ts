@@ -267,7 +267,7 @@ export class GraphAdapter implements EmailAdapter {
     return { draftId: created.id };
   }
 
-  async send(opts: ComposeOptions): Promise<{ messageId: string }> {
+  async send(opts: ComposeOptions): Promise<{ messageId: string | null }> {
     if (opts.replyTo) {
       const { draftId } = await this.draft(opts);
       await this.req(`/me/messages/${encodeURIComponent(draftId)}/send`, {
@@ -276,7 +276,10 @@ export class GraphAdapter implements EmailAdapter {
       });
       return { messageId: draftId };
     }
-    const res = await this.req(`/me/sendMail`, {
+    // Microsoft Graph's POST /me/sendMail answers 202 Accepted with an empty
+    // body and NO Location header — there is no id to recover for a direct
+    // send. Report messageId: null rather than fabricating one.
+    await this.req(`/me/sendMail`, {
       method: "POST",
       body: JSON.stringify({
         message: {
@@ -287,7 +290,6 @@ export class GraphAdapter implements EmailAdapter {
         saveToSentItems: true,
       }),
     });
-    const loc = res.headers.get("location") ?? "";
-    return { messageId: loc.split("/").pop() ?? "" };
+    return { messageId: null };
   }
 }

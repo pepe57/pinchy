@@ -51,9 +51,14 @@ export interface EmailAdapter {
   read(id: string): Promise<EmailFull>;
   search(opts: SearchOptions): Promise<EmailSummary[]>;
   draft(opts: ComposeOptions): Promise<{ draftId: string }>;
-  send(opts: ComposeOptions): Promise<{ messageId: string }>;
+  // messageId is null when the provider's send API does not return a real
+  // id for the message it just sent (e.g. Microsoft Graph's POST /sendMail
+  // answers 202 Accepted with no Location header for a direct, non-reply
+  // send). Adapters must NOT fabricate an id in that case — null signals
+  // honestly that no id is available.
+  send(opts: ComposeOptions): Promise<{ messageId: string | null }>;
   getAttachment(
     messageId: string,
-    attachmentId: string
+    attachmentId: string,
   ): Promise<{ filename: string; mimeType: string; data: Buffer }>;
 }
