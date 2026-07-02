@@ -45,6 +45,8 @@ For Microsoft Word `.docx` files, Pinchy converts the document to Markdown at up
 
 Workspaces are isolated per agent: file-reading tools only see files in that agent's own workspace, never another agent's files or the host system. The user-attached file lives in `uploads/`; if the agent has Write Files permission and produces a deliverable (an export, a draft, a generated report), it writes to the sibling `workbench/` directory instead — that separation keeps "what the user gave me" and "what I made" easy to tell apart. See [Agent Workspaces](/concepts/workspaces/) for the full picture.
 
+Chat isn't the only door into `uploads/`. An agent with email Read access can pull attachments out of a connected mailbox with `email_get_attachment`, and they land in this same `uploads/` folder — readable with the same tools described above. This is how an "invoice email → Odoo" workflow chains together: `email_get_attachment` downloads the invoice PDF into `uploads/`, the agent reads it the same way it would a chat-uploaded PDF, and `odoo_attach_file` attaches it to the matching Odoo record. See [Attachments from email](/concepts/attachments/#attachments-from-email) and [Connect Email](/guides/connect-email/) for the full flow.
+
 ## Shared agents
 
 Files uploaded to a shared agent are visible to all users with access to that agent — they live in a workspace that everyone with access to the agent shares. Pinchy shows a reminder of this in the upload UI. If you're uploading sensitive content, use a personal agent instead. See [Agent Workspaces](/concepts/workspaces/#personal-vs-shared-agent-workspaces) for the privacy implications.

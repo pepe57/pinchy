@@ -93,24 +93,21 @@ Not sure whether a piece of knowledge belongs here or in Memory? See [Instructio
 
 The Permissions tab controls which tools an agent can use. Pinchy uses an **allow-list** model: agents start with zero tools enabled, and admins grant specific capabilities.
 
-Tools are organised into two categories, plus integration-tool families that appear when the agent is connected to Odoo or email.
+Tools are organised into a **Knowledge Base** section that's always shown, plus sections that only appear when a matching connection exists.
 
-**Safe Tools** — sandboxed access to the agent's own workspace and admin-curated directories. **Workspace read access is always on** — agents can always list and read files under `uploads/` and `workbench/`. The toggleable safe tools are:
+**Knowledge Base** — sandboxed access to the agent's own workspace and admin-curated directories. **Workspace read access is always on** — agents can always list and read files under `uploads/` and `workbench/`. This section contains:
+
+- The **Allowed Directories** picker, which grants the agent read-access to additional directories under `/data/` — separate from the agent's own workspace.
+- The **Write files** (`pinchy_write`) toggle — the one powerful tool shown here, letting the agent save files into its own `workbench/` directory (and `uploads/`, kept writable for compat).
+
+**Web Search** — appears only when at least one active Web Search (Brave) connection exists:
 
 | Tool            | Tool ID             | Description                                  |
 | --------------- | ------------------- | -------------------------------------------- |
 | Search the web  | `pinchy_web_search` | Query Brave Search and return ranked results |
 | Fetch web pages | `pinchy_web_fetch`  | Download and read content from a URL         |
 
-The **Allowed Directories** picker (Knowledge Base section) lets you grant the agent read-access to additional directories under `/data/` — separate from the agent's own workspace.
-
-**Powerful Tools** — actions that change state outside the conversation:
-
-| Tool        | Tool ID        | Description                                                                                       |
-| ----------- | -------------- | ------------------------------------------------------------------------------------------------- |
-| Write files | `pinchy_write` | Save files into the agent's own `workbench/` directory (and `uploads/`, kept writable for compat) |
-
-Integration tool families (Odoo, email) appear in the same tab when the agent is granted access to a connection — see [Agent Permissions](/concepts/agent-permissions/#integration-tools).
+**Integration tool families** (Odoo, Email) — each family appears as soon as **a connection of that type exists**, regardless of whether this particular agent already has access to it. That's where you grant access: pick the connection, then choose an Odoo access level or the email operations this agent should have. See [Agent Permissions](/concepts/agent-permissions/#integration-tools) for the full per-tool breakdown.
 
 For a deeper explanation of the permission model, defense in depth, and how permissions are translated to OpenClaw configuration, see [Agent Permissions](/concepts/agent-permissions/).
 
@@ -150,7 +147,7 @@ Agents are created from the **Create New Agent** page. Pinchy ships with pre-con
 The generic starting points are:
 
 - **Knowledge Base** — pre-configured with safe file tools for answering questions from directories you select
-- **Custom Agent** — starts with no tools, for when you want to configure everything manually
+- **Custom Agent** — starts with only the default **Write files** tool enabled, for when you want to configure everything else manually
 
 Domain-specific templates (e.g., Sales Analyst, HR Analyst, Contract Analyzer) appear in the template picker when the corresponding integration is connected or their required capabilities are available. See [Connect Odoo](/guides/connect-odoo/#agent-templates) for the Odoo template list.
 

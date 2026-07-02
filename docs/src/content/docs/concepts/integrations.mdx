@@ -63,13 +63,13 @@ Email requires a provider OAuth app (one-time, per Pinchy installation): a Googl
 
 ### Permissions model
 
-Each agent gets email permissions independently. Permissions are additive: granting **Send** automatically includes **Read** and **Draft**.
+Each agent gets email permissions independently, and each operation is its own checkbox — granting **Send** does **not** also grant **Read** or **Draft**. Check every operation the agent needs.
 
 | Permission        | Tools enabled                                                      |
 | ----------------- | ------------------------------------------------------------------ |
 | **Read messages** | `email_list`, `email_read`, `email_search`, `email_get_attachment` |
-| **Create drafts** | above + `email_draft`                                              |
-| **Send messages** | above + `email_send`                                               |
+| **Create drafts** | `email_draft`                                                      |
+| **Send messages** | `email_send`                                                       |
 
 ### Token handling
 

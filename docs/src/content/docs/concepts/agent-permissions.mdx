@@ -139,15 +139,15 @@ Each agent can also have per-agent filters (Domain restrictions with Include/Exc
 
 ### Email tools
 
-When you connect a Gmail account and grant an agent access to it, Pinchy enables email tools based on which operations you check. Each permission maps to a specific set of tools.
+When you connect a [Gmail](/guides/connect-email-google/) or [Microsoft 365](/guides/connect-email-microsoft/) mailbox and grant an agent access to it, Pinchy enables email tools based on which operations you check. Each operation is an independent checkbox that grants its own toolset — check every operation the agent needs.
 
 | Permission        | Tools enabled                                                      | What the agent can do                                   |
 | ----------------- | ------------------------------------------------------------------ | ------------------------------------------------------- |
 | **Read messages** | `email_list`, `email_read`, `email_search`, `email_get_attachment` | List, read, and search emails, and download attachments |
-| **Create drafts** | above + `email_draft`                                              | Create draft emails, including reply drafts             |
-| **Send messages** | above + `email_send`                                               | Send emails immediately — cannot be undone              |
+| **Create drafts** | `email_draft`                                                      | Create draft emails, including reply drafts             |
+| **Send messages** | `email_send`                                                       | Send emails immediately — cannot be undone              |
 
-Permissions are additive — granting Send automatically includes Read and Draft. Each permission is selected per-agent, so you can have one agent that only reads email and another that can send on your behalf. `email_get_attachment` downloads an attachment into the agent's workspace for other tools to use (for example reading a PDF or attaching it to an Odoo record) — it's part of the **Read messages** permission, not a separate one.
+Each permission is selected per-agent and does **not** imply the others — granting Send does not also grant Read or Draft. Check every operation the agent needs: for example, an agent that both reads and sends mail needs **Read messages** and **Send messages** both checked. You can have one agent that only reads email and another that can send on your behalf. `email_get_attachment` downloads an attachment into the agent's workspace for other tools to use (for example reading a PDF or attaching it to an Odoo record) — it's part of the **Read messages** permission, not a separate one.
 
 :::caution[Send is powerful]
 **Send messages** lets the agent send email from the connected account without human review. Prefer **Create drafts** when a human can review before sending — it's safer by default.

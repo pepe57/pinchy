@@ -58,18 +58,18 @@ Pinchy wraps OpenClaw into something enterprises can trust:
 
 ### How Pinchy compares
 
-| | OpenClaw alone | Cloud platforms (Dust, Glean) | Workflow tools (n8n) | **Pinchy** |
-| --- | :---: | :---: | :---: | :---: |
-| Self-hosted, data stays in-house | ✅ | ❌ | ✅ | **✅** |
-| Agent-first (not flow-first) | ✅ | ✅ | flow steps | **✅** |
-| Per-agent tool permissions (allow-list) | ❌ | partial | flow-level | **✅** |
-| Roles & per-user access | ❌ | ✅ | paid | **✅** |
-| Tamper-evident audit trail (HMAC-signed) | ❌ | partial | execution log | **✅** |
-| Chat UI + Telegram for end users | partial | ✅ | ❌ | **✅** |
-| Odoo ERP integration | ❌ | ❌ | connectors | **✅** |
-| Open source | ✅ | ❌ | fair-code | **✅ (AGPL-3.0)** |
+|                                          | OpenClaw alone | Cloud platforms (Dust, Glean) | Workflow tools (n8n) |    **Pinchy**     |
+| ---------------------------------------- | :------------: | :---------------------------: | :------------------: | :---------------: |
+| Self-hosted, data stays in-house         |       ✅       |              ❌               |          ✅          |      **✅**       |
+| Agent-first (not flow-first)             |       ✅       |              ✅               |      flow steps      |      **✅**       |
+| Per-agent tool permissions (allow-list)  |       ❌       |            partial            |      flow-level      |      **✅**       |
+| Roles & per-user access                  |       ❌       |              ✅               |         paid         |      **✅**       |
+| Tamper-evident audit trail (HMAC-signed) |       ❌       |            partial            |    execution log     |      **✅**       |
+| Chat UI + Telegram for end users         |    partial     |              ✅               |          ❌          |      **✅**       |
+| Odoo ERP integration                     |       ❌       |              ❌               |      connectors      |      **✅**       |
+| Open source                              |       ✅       |              ❌               |      fair-code       | **✅ (AGPL-3.0)** |
 
-Honest caveats: Pinchy is young, the integration list is short (Odoo, Gmail, Telegram, web search, documents), there is no compliance certification yet, and granular RBAC is on the roadmap.
+Honest caveats: Pinchy is young, the integration list is short (Odoo, email — Gmail & Microsoft 365, Telegram, web search, documents), there is no compliance certification yet, and granular RBAC is on the roadmap.
 
 ## Quick Start
 
@@ -95,6 +95,7 @@ That is the whole thing: one command, no build step, pre-built images on GHCR. P
 - **Agent settings** — Configure name, model, system prompt, and tool permissions per agent
 - **Knowledge Base agents** — Create agents with scoped read-only access to specific directories
 - **Context management** — Per-user personal context and organization-wide context, editable in Settings
+- **Email integration** — Connect Gmail or Microsoft 365 mailboxes via OAuth; agents can read, search, draft, and send email with per-agent permissions
 - **Smithers onboarding** — New users get an onboarding interview where Smithers learns about them through conversation
 - **Provider management** — Configure API keys for Anthropic, OpenAI, and Google
 - **Docker Compose deployment** — Single command to run the full stack

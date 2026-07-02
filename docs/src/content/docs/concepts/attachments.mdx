@@ -39,6 +39,10 @@ PDFs are passed to the agent as readable documents. Images are passed as visual 
   attachments. Check the agent's model in **Settings → General**.
 </Aside>
 
+## Attachments from email
+
+Chat uploads aren't the only way files reach an agent's workspace. An agent with email **Read** access can call `email_get_attachment` to download an attachment from a connected mailbox — it lands in the same `uploads/` folder as chat attachments, with a sanitized filename, and is readable afterward with the same tools (PDF reading, image analysis, and so on). See [Connect Email (Gmail)](/guides/connect-email-google/) and [Connect Email (Microsoft)](/guides/connect-email-microsoft/) for how to connect a mailbox and grant this access.
+
 ## The "Protocol outdated" toast
 
 If you see a persistent toast saying the protocol is outdated, your browser tab is running an older version of Pinchy that uses a legacy attachment path the server no longer accepts. This happens when you leave a tab open across a Pinchy upgrade.

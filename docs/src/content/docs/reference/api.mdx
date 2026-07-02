@@ -776,7 +776,7 @@ Remove Telegram from every agent at once. **Admin only.** This is the backend fo
 
 ## Integrations (admin only)
 
-External system integrations — currently **Odoo**. See [Integrations](/concepts/integrations/) for the conceptual overview and [Connect Odoo](/guides/connect-odoo/) for the setup guide.
+External system integrations — **Odoo**, **email** (Gmail and Microsoft 365 via OAuth), and **Web Search**. See [Integrations](/concepts/integrations/) for the conceptual overview, [Connect Odoo](/guides/connect-odoo/) for the Odoo setup guide, and [Connect Email](/guides/connect-email/) for the email setup guide.
 
 ### `GET /api/integrations`
 
@@ -834,9 +834,91 @@ Test credentials against the external system without persisting changes. Used by
 
 Get an agent's integration permissions: which connections are enabled, access level (read-only, read-write, full, custom), and which data models are allowed.
 
-### `PATCH /api/agents/:agentId/integrations`
+### `PUT /api/agents/:agentId/integrations`
 
-Update an agent's integration permissions.
+Replace all permissions for this agent on a connection.
+
+**Request body:**
+
+| Field          | Type   | Required | Description                                                              |
+| -------------- | ------ | -------- | ------------------------------------------------------------------------ |
+| `connectionId` | string | Yes      | The connection this permission set applies to                            |
+| `permissions`  | array  | Yes      | `{ model: string, operation: string }` entries — the full set to persist |
+
+This is a full replace, not a merge: the previous permission rows for this agent/connection pair are deleted and the submitted `permissions` array is inserted in their place. Pass an empty array to revoke every permission on that connection without clearing the connection selection itself.
+
+### `DELETE /api/agents/:agentId/integrations`
+
+Remove all integration permissions for this agent, across every connection. Used when a connection is cleared from the agent's Permissions tab.
+
+### `GET /api/integrations/oauth/start?provider=<google|microsoft>`
+
+Browser-driven OAuth entry point. Redirects the admin to the provider's consent screen. Reached by clicking **Connect Google** / **Connect Microsoft** in the Add Integration wizard — not intended to be called via `fetch`.
+
+### `POST /api/integrations/oauth/start`
+
+Programmatic reconnect entry point for a `google` or `microsoft` connection that has entered the `auth_failed` state.
+
+**Request body:**
+
+| Field                   | Type   | Required | Description                          |
+| ----------------------- | ------ | -------- | ------------------------------------ |
+| `reconnectConnectionId` | string | Yes      | The existing connection to reconnect |
+
+**Response:** `{ "url": "<provider consent screen URL>" }` for the client to navigate to.
+
+### `GET /api/integrations/oauth/callback`
+
+OAuth redirect target for both Google and Microsoft. Exchanges the authorization code for tokens, fetches the mailbox's email address, and persists the connection (creating it on first connect, or updating it in place on reconnect so existing agent permissions stay attached). Not called directly — the provider redirects the browser here after consent. On success, redirects to `/settings?tab=integrations&created=<connectionId>`; on failure, redirects to `/settings?tab=integrations&error=<reason>`.
+
+### `GET /api/settings/oauth?provider=<google|microsoft>`
+
+Get whether a provider's OAuth app is configured, its `clientId` (and `tenantId` for Microsoft), and how many mailbox connections depend on it. The client secret is never returned.
+
+### `POST /api/settings/oauth`
+
+Create or update a provider's OAuth app credentials (Client ID, Client Secret, and for Microsoft, an optional Tenant ID).
+
+**Request body (Google):**
+
+```json
+{ "provider": "google", "clientId": "...", "clientSecret": "..." }
+```
+
+**Request body (Microsoft):**
+
+```json
+{
+  "provider": "microsoft",
+  "clientId": "...",
+  "clientSecret": "...",
+  "tenantId": "..."
+}
+```
+
+Credentials are encrypted at rest with AES-256-GCM.
+
+### `DELETE /api/settings/oauth?provider=<google|microsoft>`
+
+Reset a provider's OAuth app credentials. Existing mailbox connections for that provider are left untouched but will need to be reconnected once a new app is configured.
+
+### `GET /api/integrations/health`
+
+Summary counts of integration connection health (active, `auth_failed`, and connections whose credentials cannot be decrypted under the current encryption key). Backs the red `!` badge on the Settings sidebar entry.
+
+### `GET /api/internal/integrations/:connectionId/credentials`
+
+**Internal** — authenticated with the shared OpenClaw gateway token (Pattern C in `AGENTS.md`), not a user session. Called by Pinchy plugins at runtime, never by the browser.
+
+Returns the decrypted credentials for a connection, auto-refreshing an expired OAuth access token first (Google and Microsoft rotate refresh tokens differently — see the plugin cache/refetch behavior in the Secret Handling section of `AGENTS.md`). Called by `pinchy-email` and `pinchy-odoo` with the gateway token as Bearer auth; the plugin caches the response, typically with a 5-minute TTL, and invalidates on `401`.
+
+### `POST /api/internal/integrations/:connectionId/report-auth-failure`
+
+**Internal** — authenticated with the shared OpenClaw gateway token, not a user session. Called by Pinchy plugins at runtime, never by the browser.
+
+Reports a permanent authentication failure (expired API key, revoked OAuth grant) detected by a plugin at call time. Requires an `X-Plugin-Id` header naming a known Pinchy plugin, in addition to the gateway token. Transitions the connection to the `auth_failed` state shown in **Settings → Integrations**.
+
+**Request body:** `{ "reason": string }` — a human-readable description of the failure, shown on the failed connection card.
 
 ## Usage Dashboard (admin only)
 

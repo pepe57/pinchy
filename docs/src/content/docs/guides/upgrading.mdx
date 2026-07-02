@@ -185,7 +185,11 @@ docker compose pull && docker compose up -d && docker image prune -f
 
 #### Microsoft 365 (Outlook) email
 
-%%PINCHY_VERSION%% adds **Microsoft 365 (Outlook) email** support alongside Gmail. Connect a Microsoft work/school account under **Settings → Integrations**, and agents get the same `email_list`, `email_read`, `email_search`, `email_draft`, and `email_send` tools — backed by the Microsoft Graph API and governed by the same per-agent email permissions. Existing Gmail connections are unaffected.
+%%PINCHY_VERSION%% adds **Microsoft 365 (Outlook) email** support alongside Gmail. Connect a Microsoft work/school account under **Settings → Integrations**, and agents get the same `email_list`, `email_read`, `email_search`, `email_get_attachment`, `email_draft`, and `email_send` tools — backed by the Microsoft Graph API and governed by the same per-agent email permissions. Existing Gmail connections are unaffected.
+
+Each email operation (Read, Create drafts, Send) is granted independently in the Permissions tab — checking one does not grant the others. If you're upgrading an agent that relied on Send also implying Read or Draft, re-check the operations it needs.
+
+**Legacy permission vocabulary.** Agents created before this release may still have their email permissions stored as legacy per-tool rows (`search`, `list`) instead of the current `read` operation. Pinchy treats `search` and `list` as aliases of `read` — they unlock the exact same read-only toolset and never unlock draft or send. The Permissions UI displays these agents' rows as **Read messages**, and saving the agent's permissions normalizes them to the current `read` vocabulary. No action needed.
 
 #### Tamper-evident audit log (hash-chained)
 
