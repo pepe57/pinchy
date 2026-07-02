@@ -1,7 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EXPIRY_BUFFER_MS, isTokenExpired } from "@/lib/integrations/oauth-token";
 
 describe("oauth-token", () => {
+  // Freeze the clock: isTokenExpired() compares against a fresh Date.now() call,
+  // so computing a boundary date and then asserting against real time is racy —
+  // any elapsed millisecond between the two Date.now() reads flips the strict
+  // inequality and fails the boundary assertion (~1/1800 runs). Freezing time
+  // makes both reads observe the exact same instant.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   describe("EXPIRY_BUFFER_MS", () => {
     it("is 5 minutes in milliseconds", () => {
       expect(EXPIRY_BUFFER_MS).toBe(5 * 60 * 1000);
