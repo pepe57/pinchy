@@ -70,12 +70,20 @@ const OAUTH_ERROR_MESSAGES = new Map<string, string>([
     "profile_fetch_failed",
     "Could not fetch your account profile. Check that your OAuth app grants the required profile permission.",
   ],
-  ["token_exchange_failed", "OAuth authorization failed. Please try connecting again."],
+  [
+    "token_exchange_failed",
+    "Sign-in worked, but Pinchy couldn't finish connecting — double-check the Client Secret under Connected apps, then try again.",
+  ],
   ["state_mismatch", "OAuth session expired. Please try again."],
   ["not_configured", "OAuth is not configured."],
   ["connection_not_found", "Connection not found. Please try again."],
   ["unauthorized", "OAuth authorization failed. Please try again."],
   ["missing_params", "OAuth authorization failed. Please try again."],
+  [
+    "consent_declined",
+    "You didn't authorize the connection, so nothing changed. You can try again whenever you're ready.",
+  ],
+  ["provider_error", "The provider reported a problem during sign-in. Please try again."],
 ]);
 
 export function SettingsIntegrations({ oauthError }: { oauthError?: string } = {}) {

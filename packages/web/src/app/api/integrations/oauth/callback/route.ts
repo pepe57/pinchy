@@ -40,6 +40,25 @@ function errorRedirect(origin: string, error: string) {
   return NextResponse.redirect(url.toString(), 302);
 }
 
+// Map the provider's ?error to our own fixed vocabulary. NEVER pass the
+// provider's error_description through — it is attacker-influenceable and
+// would be a reflected-XSS / open-redirect vector (RFC 9700). settings-
+// integrations.tsx renders a fixed message per code, never the raw text.
+function mapProviderError(providerError: string): string {
+  return providerError === "access_denied" ? "consent_declined" : "provider_error";
+}
+
+// Idempotent: safe to call on any error path and on a refreshed/replayed
+// callback request. A missing pendingId or an already-deleted row is a no-op.
+async function deletePendingConnection(pendingId: string | undefined) {
+  if (!pendingId) return;
+  await db
+    .delete(integrationConnections)
+    .where(
+      and(eq(integrationConnections.id, pendingId), eq(integrationConnections.status, "pending"))
+    );
+}
+
 /**
  * Resolve which provider a callback belongs to when there is no live pending
  * row (fresh-connect flow already exhausted its pending-row lookup, or this
@@ -88,14 +107,20 @@ export async function GET(request: Request) {
     return errorRedirect(origin, "unauthorized");
   }
 
-  // 2. Get code and state from query params
+  // 2. Get code, state, and provider-reported error from query params. A
+  // request that has neither a code nor a provider error (and/or no state)
+  // is simply malformed — fail fast before even looking at cookies.
   const code = requestUrl.searchParams.get("code");
   const state = requestUrl.searchParams.get("state");
-  if (!code || !state) {
+  const providerError = requestUrl.searchParams.get("error");
+  if (!state || (!code && !providerError)) {
     return errorRedirect(origin, "missing_params");
   }
 
-  // 3. CSRF validation: compare state param to oauth_state cookie
+  // 3. CSRF validation: compare state param to oauth_state cookie. This MUST
+  // run before we act on providerError — an attacker must not be able to
+  // trigger pending-row deletion (or anything else) with a forged state
+  // param.
   const cookieHeader = request.headers.get("Cookie") ?? "";
   const cookies = Object.fromEntries(
     cookieHeader.split(";").map((c) => {
@@ -106,6 +131,23 @@ export async function GET(request: Request) {
   const cookieState = cookies["oauth_state"];
   if (!cookieState || cookieState !== state) {
     return errorRedirect(origin, "state_mismatch");
+  }
+
+  // 3a. Provider reported an error instead of a code (e.g. the user declined
+  // consent on Microsoft's/Google's authorize page). This never carries a
+  // `code`, so it must be checked before the missing-code guard below.
+  // Clean up the abandoned pending row so the UI doesn't show "Setup in
+  // progress" until the 15-minute GC in oauth/start eventually reaps it.
+  if (providerError) {
+    await deletePendingConnection(cookies["oauth_pending_id"]);
+    return errorRedirect(origin, mapProviderError(providerError));
+  }
+
+  // 3b. No provider error and no code: malformed/incomplete callback request
+  // (already ruled out by the combined guard above, but narrows `code` to
+  // `string` for TypeScript below).
+  if (!code) {
+    return errorRedirect(origin, "missing_params");
   }
 
   // Decode the state once and reuse it for both provider determination below
@@ -147,6 +189,7 @@ export async function GET(request: Request) {
   // 5. Read OAuth settings for the determined provider
   const settings = await getOAuthSettings(oauthProvider.id);
   if (!settings) {
+    await deletePendingConnection(pendingId);
     return errorRedirect(origin, "not_configured");
   }
 
@@ -192,6 +235,7 @@ export async function GET(request: Request) {
         },
         outcome: "failure",
       });
+      await deletePendingConnection(pendingId);
       return errorRedirect(origin, "token_exchange_failed");
     }
 
@@ -219,6 +263,7 @@ export async function GET(request: Request) {
         },
         outcome: "failure",
       });
+      await deletePendingConnection(pendingId);
       return errorRedirect(origin, "profile_fetch_failed");
     }
 
@@ -253,6 +298,7 @@ export async function GET(request: Request) {
         },
         outcome: "failure",
       });
+      await deletePendingConnection(pendingId);
       return errorRedirect(origin, "token_exchange_failed");
     }
 
@@ -280,6 +326,7 @@ export async function GET(request: Request) {
         },
         outcome: "failure",
       });
+      await deletePendingConnection(pendingId);
       return errorRedirect(origin, "profile_fetch_failed");
     }
 

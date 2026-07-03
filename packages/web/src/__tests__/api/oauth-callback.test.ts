@@ -204,6 +204,120 @@ describe("GET /api/integrations/oauth/callback", () => {
     expect(location.searchParams.get("error")).toBe("missing_params");
   });
 
+  describe("provider returns ?error= instead of ?code= (e.g. declined consent)", () => {
+    it("redirects with error=consent_declined and deletes the pending row", async () => {
+      mockGetSession.mockResolvedValue(adminSession());
+
+      const response = await GET(
+        makeRequest(
+          { error: "access_denied", state: VALID_STATE },
+          `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+        )
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get("Location")!);
+      expect(location.searchParams.get("error")).toBe("consent_declined");
+
+      // The pending row must be deleted, not merely reaped later by GC.
+      expect(mockDeleteWhere).toHaveBeenCalled();
+
+      // No connection should have been activated.
+      expect(mockUpdateSet).not.toHaveBeenCalled();
+      expect(mockValues).not.toHaveBeenCalled();
+    });
+
+    it("maps unrecognized provider error codes to a generic provider_error", async () => {
+      mockGetSession.mockResolvedValue(adminSession());
+
+      const response = await GET(
+        makeRequest(
+          { error: "server_error", state: VALID_STATE },
+          `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+        )
+      );
+
+      const location = new URL(response.headers.get("Location")!);
+      expect(location.searchParams.get("error")).toBe("provider_error");
+    });
+
+    it("security: never reflects error_description into the redirect Location", async () => {
+      mockGetSession.mockResolvedValue(adminSession());
+
+      const maliciousDescription = "<script>alert(1)</script>";
+      const response = await GET(
+        makeRequest(
+          {
+            error: "access_denied",
+            error_description: maliciousDescription,
+            state: VALID_STATE,
+          },
+          `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+        )
+      );
+
+      const location = response.headers.get("Location")!;
+      expect(location).not.toContain(maliciousDescription);
+      expect(location).not.toContain("<script>");
+      expect(location).not.toContain("alert(1)");
+
+      const parsed = new URL(location);
+      expect(parsed.searchParams.get("error")).toBe("consent_declined");
+    });
+
+    it("still validates state (CSRF) before acting on ?error= — forged state must not delete a pending row", async () => {
+      mockGetSession.mockResolvedValue(adminSession());
+
+      const response = await GET(
+        makeRequest(
+          { error: "access_denied", state: "attacker-forged-state" },
+          `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+        )
+      );
+
+      const location = new URL(response.headers.get("Location")!);
+      expect(location.searchParams.get("error")).toBe("state_mismatch");
+      expect(mockDeleteWhere).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op (does not throw) when the oauth_pending_id cookie is missing", async () => {
+      mockGetSession.mockResolvedValue(adminSession());
+
+      const response = await GET(
+        makeRequest({ error: "access_denied", state: VALID_STATE }, `oauth_state=${VALID_STATE}`)
+      );
+
+      expect(response.status).toBe(302);
+      const location = new URL(response.headers.get("Location")!);
+      expect(location.searchParams.get("error")).toBe("consent_declined");
+      expect(mockDeleteWhere).not.toHaveBeenCalled();
+    });
+
+    it("is idempotent when the pending row was already deleted (duplicate/replayed callback)", async () => {
+      mockGetSession.mockResolvedValue(adminSession());
+      mockDeleteWhere.mockResolvedValueOnce(undefined);
+
+      const first = await GET(
+        makeRequest(
+          { error: "access_denied", state: VALID_STATE },
+          `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+        )
+      );
+      expect(first.status).toBe(302);
+
+      const second = await GET(
+        makeRequest(
+          { error: "access_denied", state: VALID_STATE },
+          `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+        )
+      );
+
+      expect(second.status).toBe(302);
+      const location = new URL(second.headers.get("Location")!);
+      expect(location.searchParams.get("error")).toBe("consent_declined");
+    });
+  });
+
   it("redirects with error if state is missing", async () => {
     mockGetSession.mockResolvedValue(adminSession());
 
@@ -264,12 +378,18 @@ describe("GET /api/integrations/oauth/callback", () => {
     });
 
     const response = await GET(
-      makeRequest({ code: "bad-code", state: VALID_STATE }, `oauth_state=${VALID_STATE}`)
+      makeRequest(
+        { code: "bad-code", state: VALID_STATE },
+        `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+      )
     );
 
     expect(response.status).toBe(302);
     const location = new URL(response.headers.get("Location")!);
     expect(location.searchParams.get("error")).toBe("token_exchange_failed");
+
+    // The abandoned pending row must be cleaned up, not left to the 15-minute GC.
+    expect(mockDeleteWhere).toHaveBeenCalled();
   });
 
   it("logs audit failure when token exchange fails", async () => {

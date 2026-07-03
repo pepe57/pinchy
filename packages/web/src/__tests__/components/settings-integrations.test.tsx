@@ -494,4 +494,37 @@ describe("SettingsIntegrations — OAuth callback errors", () => {
       expect(toast.error).toHaveBeenCalledWith("OAuth connection failed.");
     });
   });
+
+  it("shows a reassuring toast when the user declined consent (oauthError='consent_declined')", async () => {
+    mockFetchConnections([]);
+    const { toast } = await import("sonner");
+    render(<SettingsIntegrations oauthError="consent_declined" />);
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "You didn't authorize the connection, so nothing changed. You can try again whenever you're ready."
+      );
+    });
+  });
+
+  it("shows a toast for an unrecognized provider error (oauthError='provider_error')", async () => {
+    mockFetchConnections([]);
+    const { toast } = await import("sonner");
+    render(<SettingsIntegrations oauthError="provider_error" />);
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "The provider reported a problem during sign-in. Please try again."
+      );
+    });
+  });
+
+  it("shows the sharpened token_exchange_failed message pointing at the Client Secret", async () => {
+    mockFetchConnections([]);
+    const { toast } = await import("sonner");
+    render(<SettingsIntegrations oauthError="token_exchange_failed" />);
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Sign-in worked, but Pinchy couldn't finish connecting — double-check the Client Secret under Connected apps, then try again."
+      );
+    });
+  });
 });
