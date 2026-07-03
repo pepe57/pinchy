@@ -358,12 +358,18 @@ describe("GET /api/integrations/oauth/callback", () => {
     mockGetOAuthSettings.mockResolvedValue(null);
 
     const response = await GET(
-      makeRequest({ code: "abc", state: VALID_STATE }, `oauth_state=${VALID_STATE}`)
+      makeRequest(
+        { code: "abc", state: VALID_STATE },
+        `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+      )
     );
 
     expect(response.status).toBe(302);
     const location = new URL(response.headers.get("Location")!);
     expect(location.searchParams.get("error")).toBe("not_configured");
+
+    // The abandoned pending row must be cleaned up, not left to the 15-minute GC.
+    expect(mockDeleteWhere).toHaveBeenCalled();
   });
 
   it("redirects with error if token exchange fails", async () => {
@@ -424,12 +430,18 @@ describe("GET /api/integrations/oauth/callback", () => {
       .mockResolvedValueOnce({ ok: false, json: vi.fn().mockResolvedValue({}) });
 
     const response = await GET(
-      makeRequest({ code: "valid-code", state: VALID_STATE }, `oauth_state=${VALID_STATE}`)
+      makeRequest(
+        { code: "valid-code", state: VALID_STATE },
+        `oauth_state=${VALID_STATE}; oauth_pending_id=pending-conn-id`
+      )
     );
 
     expect(response.status).toBe(302);
     const location = new URL(response.headers.get("Location")!);
     expect(location.searchParams.get("error")).toBe("profile_fetch_failed");
+
+    // The abandoned pending row must be cleaned up, not left to the 15-minute GC.
+    expect(mockDeleteWhere).toHaveBeenCalled();
   });
 
   it("logs audit failure when profile fetch fails", async () => {
@@ -930,6 +942,9 @@ describe("GET /api/integrations/oauth/callback", () => {
           }),
         })
       );
+
+      // The abandoned pending row must be cleaned up, not left to the 15-minute GC.
+      expect(mockDeleteWhere).toHaveBeenCalled();
     });
 
     it("redirects to settings with created connection id on success", async () => {
