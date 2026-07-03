@@ -289,8 +289,9 @@ describe("POST /api/settings/oauth", () => {
     expect(response.status).toBe(400);
   });
 
-  it("returns 400 when clientSecret is missing", async () => {
+  it("returns 400 when clientSecret is missing and no settings exist yet (first-time setup)", async () => {
     vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(getOAuthSettings).mockResolvedValueOnce(null);
 
     const req = new NextRequest("http://localhost/api/settings/oauth", {
       method: "POST",
@@ -298,6 +299,45 @@ describe("POST /api/settings/oauth", () => {
     });
     const response = await POST(req);
     expect(response.status).toBe(400);
+
+    const body = await response.json();
+    expect(body.error).toMatch(/Client Secret is required when configuring a new app/i);
+    expect(saveOAuthSettings).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when clientSecret is an explicitly-sent empty string", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
+
+    const req = new NextRequest("http://localhost/api/settings/oauth", {
+      method: "POST",
+      body: JSON.stringify({ provider: "google", clientId: "id", clientSecret: "" }),
+    });
+    const response = await POST(req);
+    expect(response.status).toBe(400);
+  });
+
+  it("reuses the stored clientSecret when omitted and settings already exist", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(getOAuthSettings).mockResolvedValueOnce({
+      clientId: "old-client-id",
+      clientSecret: "existing-secret",
+    });
+    vi.mocked(saveOAuthSettings).mockResolvedValueOnce(undefined);
+
+    const req = new NextRequest("http://localhost/api/settings/oauth", {
+      method: "POST",
+      body: JSON.stringify({ provider: "google", clientId: "new-client-id" }),
+    });
+    const response = await POST(req);
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body).toEqual({ success: true });
+
+    expect(saveOAuthSettings).toHaveBeenCalledWith("google", {
+      clientId: "new-client-id",
+      clientSecret: "existing-secret",
+    });
   });
 
   it("saves settings and returns success", async () => {
@@ -397,6 +437,49 @@ describe("POST /api/settings/oauth", () => {
       clientId: "ms-client",
       clientSecret: "ms-secret",
     });
+  });
+
+  it("reuses the stored clientSecret for microsoft when omitted and settings already exist", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(getOAuthSettings).mockResolvedValueOnce({
+      clientId: "old-ms-client",
+      clientSecret: "existing-ms-secret",
+      tenantId: "old-tenant",
+    });
+    vi.mocked(saveOAuthSettings).mockResolvedValueOnce(undefined);
+
+    const req = new NextRequest("http://localhost/api/settings/oauth", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "microsoft",
+        clientId: "new-ms-client",
+        tenantId: "new-tenant",
+      }),
+    });
+    const response = await POST(req);
+    expect(response.status).toBe(200);
+
+    expect(saveOAuthSettings).toHaveBeenCalledWith("microsoft", {
+      clientId: "new-ms-client",
+      clientSecret: "existing-ms-secret",
+      tenantId: "new-tenant",
+    });
+  });
+
+  it("returns 400 for microsoft when clientSecret is omitted and no settings exist yet", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(getOAuthSettings).mockResolvedValueOnce(null);
+
+    const req = new NextRequest("http://localhost/api/settings/oauth", {
+      method: "POST",
+      body: JSON.stringify({ provider: "microsoft", clientId: "ms-client" }),
+    });
+    const response = await POST(req);
+    expect(response.status).toBe(400);
+
+    const body = await response.json();
+    expect(body.error).toMatch(/Client Secret is required when configuring a new app/i);
+    expect(saveOAuthSettings).not.toHaveBeenCalled();
   });
 
   it("POST with microsoft provider logs audit event", async () => {

@@ -23,13 +23,13 @@ function isSupportedProvider(value: unknown): value is SupportedProvider {
 const saveGoogleOAuthSchema = z.object({
   provider: z.literal("google"),
   clientId: z.string().min(1),
-  clientSecret: z.string().min(1),
+  clientSecret: z.string().min(1).optional(),
 });
 
 const saveMicrosoftOAuthSchema = z.object({
   provider: z.literal("microsoft"),
   clientId: z.string().min(1),
-  clientSecret: z.string().min(1),
+  clientSecret: z.string().min(1).optional(),
   tenantId: z.string().min(1).optional(),
 });
 
@@ -99,17 +99,34 @@ export async function POST(request: NextRequest) {
   if ("error" in parsed) return parsed.error;
   const data = parsed.data;
 
+  // An omitted clientSecret means "keep the current one" so an admin can
+  // update the Client ID (and, for Microsoft, the Tenant ID) without
+  // re-entering the secret. Fall back to the stored secret when omitted; if
+  // there's nothing stored yet, this is first-time setup (this same endpoint
+  // also backs the Add-Integration wizard) and a secret is required.
+  let clientSecret = data.clientSecret;
+  if (!clientSecret) {
+    const existing = await getOAuthSettings(data.provider);
+    if (!existing) {
+      return NextResponse.json(
+        { error: "Client Secret is required when configuring a new app." },
+        { status: 400 }
+      );
+    }
+    clientSecret = existing.clientSecret;
+  }
+
   // Persist per-provider settings (Microsoft carries an optional tenantId). The
   // save stays branch-narrowed so saveOAuthSettings' generic gets the exact
   // ProviderSettings[P] shape it expects; the audit write below is shared.
   if (data.provider === "microsoft") {
-    const { clientId, clientSecret, tenantId } = data;
+    const { clientId, tenantId } = data;
     await saveOAuthSettings(
       "microsoft",
       tenantId ? { clientId, clientSecret, tenantId } : { clientId, clientSecret }
     );
   } else {
-    const { clientId, clientSecret } = data;
+    const { clientId } = data;
     await saveOAuthSettings("google", { clientId, clientSecret });
   }
 

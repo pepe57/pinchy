@@ -168,7 +168,9 @@ describe("EditOAuthDialog", () => {
     });
   });
 
-  it("disables save when Client Secret is empty", async () => {
+  it("enables save when Client ID is filled and Client Secret is left blank", async () => {
+    // The secret is optional on edit — an empty field means "keep the
+    // current secret", matching edit-credentials-dialog.tsx's pattern.
     fetchSpy.mockResolvedValue({
       ok: true,
       json: async () => ({ configured: true, clientId: "id" }),
@@ -177,7 +179,81 @@ describe("EditOAuthDialog", () => {
     render(<EditOAuthDialog provider="google" open={true} onOpenChange={vi.fn()} />);
 
     await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    });
+  });
+
+  it("disables save when Client ID is empty", async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ configured: true, clientId: "" }),
+    } as Response);
+
+    render(<EditOAuthDialog provider="google" open={true} onOpenChange={vi.fn()} />);
+
+    await waitFor(() => {
       expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    });
+  });
+
+  it("submits without a clientSecret field when the secret is left blank", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ configured: true, clientId: "old-id" }),
+    } as Response);
+
+    render(<EditOAuthDialog provider="google" open={true} onOpenChange={onOpenChange} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Client ID")).toHaveValue("old-id");
+    });
+
+    await user.clear(screen.getByLabelText("Client ID"));
+    await user.type(screen.getByLabelText("Client ID"), "new-id");
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ success: true }),
+    } as Response);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/settings/oauth",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            provider: "google",
+            clientId: "new-id",
+          }),
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("Google OAuth settings saved");
+    });
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("shows a hint that the secret field can be left blank to keep the current secret", async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ configured: true, clientId: "id" }),
+    } as Response);
+
+    render(<EditOAuthDialog provider="google" open={true} onOpenChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Client Secret")).toHaveAttribute(
+        "placeholder",
+        "Leave empty to keep the current secret"
+      );
     });
   });
 });

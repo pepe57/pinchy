@@ -69,19 +69,15 @@ export function EditOAuthDialog({ provider, open, onOpenChange }: EditOAuthDialo
     setError("");
     try {
       const trimmedTenant = tenantId.trim();
-      const body =
-        hasTenant && trimmedTenant.length > 0
-          ? {
-              provider,
-              clientId: clientId.trim(),
-              clientSecret: clientSecret.trim(),
-              tenantId: trimmedTenant,
-            }
-          : {
-              provider,
-              clientId: clientId.trim(),
-              clientSecret: clientSecret.trim(),
-            };
+      const trimmedSecret = clientSecret.trim();
+      const body: {
+        provider: OAuthProviderId;
+        clientId: string;
+        clientSecret?: string;
+        tenantId?: string;
+      } = { provider, clientId: clientId.trim() };
+      if (trimmedSecret.length > 0) body.clientSecret = trimmedSecret;
+      if (hasTenant && trimmedTenant.length > 0) body.tenantId = trimmedTenant;
       const res = await fetch("/api/settings/oauth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -101,7 +97,7 @@ export function EditOAuthDialog({ provider, open, onOpenChange }: EditOAuthDialo
     }
   }
 
-  const canSave = clientId.trim().length > 0 && clientSecret.trim().length > 0;
+  const canSave = clientId.trim().length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -132,7 +128,7 @@ export function EditOAuthDialog({ provider, open, onOpenChange }: EditOAuthDialo
                 type="password"
                 value={clientSecret}
                 onChange={(e) => setClientSecret(e.target.value)}
-                placeholder="Enter new secret to update"
+                placeholder="Leave empty to keep the current secret"
               />
             </div>
             {hasTenant && (
