@@ -269,6 +269,14 @@ Azure client secrets have a finite lifetime (24 months maximum). When a secret e
 
 If a mailbox already flipped to the red **"Authentication failed"** badge before you rotated the secret, that badge doesn't clear on its own — click **Test Connection** (or **Reconnect**) on that mailbox's `…` menu to clear it once the new secret is in place.
 
+**"You didn't authorize the connection"**
+
+You clicked **Cancel** or **Decline** on Microsoft's consent screen instead of approving the requested permissions. Nothing changed on Pinchy's side — start the connection again from **Connected apps** and approve the requested scopes this time.
+
+**"Sign-in worked, but Pinchy couldn't finish connecting"**
+
+The consent step succeeded, but Pinchy couldn't exchange the authorization code for a token — almost always a stale or incorrect Client Secret. Double-check the Client Secret under **Connected apps** (see [Edit the app credentials](#edit-the-app-credentials)), then try connecting again.
+
 **Microsoft OAuth settings missing**
 
 If an admin resets or deletes the Microsoft OAuth app in **Connected apps** while mailboxes are still connected through it, agents fail with `Microsoft OAuth settings missing — reconnect the mailbox or restore the OAuth app` the next time their access token needs to refresh, and the mailbox flips to the red **"Authentication failed"** state. Recover by re-entering the app credentials in **Connected apps** (restoring the same Client ID/Secret re-enables existing refresh tokens) or by reconnecting the affected mailbox.
