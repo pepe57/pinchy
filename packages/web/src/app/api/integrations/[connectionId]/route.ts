@@ -9,6 +9,7 @@ import { odooCredentialsSchema } from "@/lib/integrations/odoo-schema";
 import { validateExternalUrl } from "@/lib/integrations/url-validation";
 import { maskConnectionCredentials } from "@/lib/integrations/mask-credentials";
 import { probeIntegrationCredentials } from "@/lib/integrations/probe";
+import { getOAuthProvider } from "@/lib/integrations/oauth-providers";
 import { clearIntegrationAuthError } from "@/lib/integrations/auth-state";
 import { z } from "zod";
 import { parseRequestBody, formatValidationError } from "@/lib/api-validation";
@@ -69,11 +70,11 @@ export const PATCH = withAdmin<RouteContext>(async (request, { params }, session
   const rawCredentials = body.credentials;
   let parsedCredentials: Record<string, unknown> | undefined;
   if (rawCredentials !== undefined) {
-    if (existing.type === "google") {
+    const oauthProvider = getOAuthProvider(existing.type);
+    if (oauthProvider) {
       return NextResponse.json(
         {
-          error:
-            "Google credentials cannot be edited directly. Use Reconnect to start a new OAuth flow.",
+          error: `${oauthProvider.label} credentials cannot be edited directly. Use Reconnect to start a new OAuth flow.`,
         },
         { status: 400 }
       );

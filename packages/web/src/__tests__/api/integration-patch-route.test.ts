@@ -289,6 +289,37 @@ describe("PATCH /api/integrations/[connectionId] — credential probe", () => {
     expect(mockUpdateSet).not.toHaveBeenCalled();
   });
 
+  it("PATCH on microsoft connection rejects credentials field with the same Reconnect guidance as google", async () => {
+    const microsoftConnection = {
+      ...mockOdooConnection,
+      id: "conn-microsoft-1",
+      type: "microsoft",
+    };
+    mockSelectWhere.mockResolvedValueOnce([microsoftConnection]);
+
+    const { PATCH } = await import("@/app/api/integrations/[connectionId]/route");
+
+    const response = await PATCH(
+      makeRequest("/api/integrations/conn-microsoft-1", {
+        method: "PATCH",
+        body: JSON.stringify({ credentials: { accessToken: "x" } }),
+      }),
+      { params: Promise.resolve({ connectionId: "conn-microsoft-1" }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    // Must NOT fall through to the generic "Unknown connection type" branch —
+    // microsoft is an OAuth provider just like google and needs the same
+    // actionable "use Reconnect" guidance, not a misleading unknown-type error.
+    expect(body.error).not.toMatch(/Unknown connection type/i);
+    expect(body.error).toMatch(/Microsoft|OAuth|Reconnect/i);
+    // Probe should not have been called
+    expect(mockProbeIntegrationCredentials).not.toHaveBeenCalled();
+    // DB update should not have been called
+    expect(mockUpdateSet).not.toHaveBeenCalled();
+  });
+
   it("PATCH with only name (no credentials) skips probe and updates normally", async () => {
     const { PATCH } = await import("@/app/api/integrations/[connectionId]/route");
 
