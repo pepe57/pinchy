@@ -569,5 +569,91 @@ describe("GET /api/internal/integrations/:connectionId/credentials", () => {
       // DB should NOT be updated when refresh fails
       expect(db.update).not.toHaveBeenCalled();
     });
+
+    describe("Persist failure after successful rotation (issue #237)", () => {
+      // Microsoft rotates the refresh token on every use, so once
+      // refreshMsAccessToken succeeds, the OLD refresh token is already dead
+      // at the provider. If the DB write that persists the rotated token
+      // then fails, the rotated token must not be silently discarded —
+      // falling back to "stale" credentials here would mean the DB keeps a
+      // refresh token the provider has already burned, permanently bricking
+      // the mailbox with invalid_grant until manual reconnect.
+
+      function mockDbUpdateResults(whereResults: Array<() => Promise<unknown>>) {
+        const where = vi.fn();
+        for (const result of whereResults) {
+          where.mockImplementationOnce(result);
+        }
+        vi.mocked(db.update).mockReturnValue({
+          set: vi.fn().mockReturnValue({ where }),
+        } as any);
+        return where;
+      }
+
+      beforeEach(() => {
+        vi.mocked(isTokenExpired).mockReturnValue(true);
+        const expiredAt = new Date(Date.now() - 60_000).toISOString();
+        vi.mocked(decrypt).mockReturnValue(
+          JSON.stringify({
+            accessToken: "ms-old-access-token",
+            refreshToken: "ms-old-refresh-token",
+            expiresAt: expiredAt,
+            scope: "offline_access Mail.ReadWrite",
+          })
+        );
+        vi.mocked(getOAuthSettings).mockResolvedValue({
+          clientId: "ms-client-id",
+          clientSecret: "ms-client-secret",
+          tenantId: "ms-tenant-id",
+        });
+        vi.mocked(refreshMsAccessToken).mockResolvedValue({
+          accessToken: "ms-rotated-access-token",
+          refreshToken: "ms-rotated-refresh-token",
+          expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        });
+      });
+
+      it("persists the rotated Microsoft refresh token on a retried DB write", async () => {
+        const where = mockDbUpdateResults([
+          () => Promise.reject(new Error("transient DB error")),
+          () => Promise.resolve(undefined),
+        ]);
+
+        const res = await GET(makeRequest("conn-ms"), makeParams("conn-ms"));
+        expect(res.status).toBe(200);
+
+        const data = await res.json();
+        expect(data.type).toBe("microsoft");
+        expect(data.credentials.accessToken).toBe("ms-rotated-access-token");
+        expect(data.credentials.refreshToken).toBe("ms-rotated-refresh-token");
+
+        expect(db.update).toHaveBeenCalledTimes(2);
+        expect(where).toHaveBeenCalledTimes(2);
+
+        // The retried write must contain the rotated (not stale) refreshToken.
+        const secondEncryptedArg = vi.mocked(encrypt).mock.calls[1][0];
+        const persisted = JSON.parse(secondEncryptedArg);
+        expect(persisted.refreshToken).toBe("ms-rotated-refresh-token");
+        expect(persisted.accessToken).toBe("ms-rotated-access-token");
+      });
+
+      it("fails the request instead of returning stale credentials when the rotated token cannot be persisted", async () => {
+        mockDbUpdateResults([
+          () => Promise.reject(new Error("transient DB error")),
+          () => Promise.reject(new Error("transient DB error again")),
+        ]);
+
+        await expect(GET(makeRequest("conn-ms"), makeParams("conn-ms"))).rejects.toThrow();
+
+        expect(db.update).toHaveBeenCalledTimes(2);
+
+        // There is no generic catch-all in the GET handler for this failure
+        // mode, so the route rejects rather than resolving a Response — an
+        // unhandled throw becomes a 500 at the framework boundary. That is
+        // exactly the point: the alternative (a resolved 200 carrying the
+        // stale accessToken/refreshToken) is the bug this test guards
+        // against, and asserting `.rejects` proves that path is impossible.
+      });
+    });
   });
 });
