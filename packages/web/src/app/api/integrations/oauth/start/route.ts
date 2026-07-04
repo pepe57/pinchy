@@ -20,6 +20,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth";
 import { getOAuthSettings, type MicrosoftOAuthSettings } from "@/lib/integrations/oauth-settings";
 import { getOAuthProvider, OAUTH_PROVIDERS } from "@/lib/integrations/oauth-providers";
+import { parseCookieHeader, resolveForwardedOrigin } from "@/lib/integrations/oauth-request";
 import { parseRequestBody } from "@/lib/api-validation";
 import { db } from "@/db";
 import { integrationConnections } from "@/db/schema";
@@ -35,11 +36,7 @@ function errorRedirect(origin: string, error: string) {
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0].trim();
-  const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
-  const origin =
-    forwardedProto && forwardedHost ? `${forwardedProto}://${forwardedHost}` : requestUrl.origin;
-  const isSecure = (forwardedProto ?? requestUrl.protocol.replace(":", "")) === "https";
+  const { origin, isSecure } = resolveForwardedOrigin(request);
 
   // Validate admin session — render failures as redirects, not JSON, because
   // this is reached via browser navigation.
@@ -86,13 +83,7 @@ export async function GET(request: Request) {
 
   // Clean up the user's own previous pending record (if any) before starting a new flow.
   // Only delete the specific record from a previous attempt — avoid touching other admins' pending records.
-  const cookieHeader = request.headers.get("Cookie") ?? "";
-  const existingPendingId = Object.fromEntries(
-    cookieHeader.split(";").map((c) => {
-      const [key, ...rest] = c.trim().split("=");
-      return [key, rest.join("=")];
-    })
-  )["oauth_pending_id"];
+  const existingPendingId = parseCookieHeader(request.headers.get("Cookie"))["oauth_pending_id"];
   if (existingPendingId) {
     await db
       .delete(integrationConnections)
@@ -182,11 +173,7 @@ const reconnectSchema = z.object({
  * the tokens are actually exchanged and persisted (integration.credentials_updated).
  */
 export async function POST(request: NextRequest) {
-  const requestUrl = new URL(request.url);
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0].trim();
-  const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
-  const origin =
-    forwardedProto && forwardedHost ? `${forwardedProto}://${forwardedHost}` : requestUrl.origin;
+  const { origin, isSecure } = resolveForwardedOrigin(request);
 
   const session = await getSession({ headers: await headers() });
   if (!session?.user || session.user.role !== "admin") {
@@ -223,7 +210,6 @@ export async function POST(request: NextRequest) {
   const stateObj = { nonce, reconnectConnectionId };
   const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
   const redirectUri = `${origin}/api/integrations/oauth/callback`;
-  const isSecure = (forwardedProto ?? requestUrl.protocol.replace(":", "")) === "https";
 
   // connection.type is "google" | "microsoft" here (guarded above), so the
   // descriptor always resolves; keep a Google fallback for type-safety.

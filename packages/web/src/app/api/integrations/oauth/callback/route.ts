@@ -14,6 +14,7 @@ import { redactEmail } from "@/lib/audit";
 import { deferAuditLog } from "@/lib/audit-deferred";
 import { computeExpiresAt } from "@/lib/integrations/oauth-token";
 import { clearIntegrationAuthError } from "@/lib/integrations/auth-state";
+import { parseCookieHeader, resolveForwardedOrigin } from "@/lib/integrations/oauth-request";
 import { eq, and } from "drizzle-orm";
 
 /**
@@ -173,11 +174,7 @@ async function resolveProviderFallback(
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0].trim();
-  const forwardedHost = request.headers.get("x-forwarded-host") || request.headers.get("host");
-  const origin =
-    forwardedProto && forwardedHost ? `${forwardedProto}://${forwardedHost}` : requestUrl.origin;
-  const isSecure = (forwardedProto ?? requestUrl.protocol.replace(":", "")) === "https";
+  const { origin, isSecure } = resolveForwardedOrigin(request);
 
   // 1. Validate admin session
   const session = await getSession({ headers: await headers() });
@@ -199,13 +196,7 @@ export async function GET(request: Request) {
   // run before we act on providerError — an attacker must not be able to
   // trigger pending-row deletion (or anything else) with a forged state
   // param.
-  const cookieHeader = request.headers.get("Cookie") ?? "";
-  const cookies = Object.fromEntries(
-    cookieHeader.split(";").map((c) => {
-      const [key, ...rest] = c.trim().split("=");
-      return [key, rest.join("=")];
-    })
-  );
+  const cookies = parseCookieHeader(request.headers.get("Cookie"));
   const cookieState = cookies["oauth_state"];
   if (!cookieState || cookieState !== state) {
     return errorRedirect(origin, "state_mismatch");
