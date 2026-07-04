@@ -63,6 +63,21 @@ describe("OAUTH_PROVIDERS descriptor", () => {
       expect(OAUTH_PROVIDERS.microsoft.hasTenant).toBe(true);
     });
 
+    it("only sends scope in the token-exchange request body for Microsoft", () => {
+      // Microsoft's token endpoint validates the requested scope against the
+      // app registration; Google's authorization_code grant derives the
+      // granted scope from the code itself and takes no scope param.
+      expect(OAUTH_PROVIDERS.google.sendScopeInTokenExchange).toBe(false);
+      expect(OAUTH_PROVIDERS.microsoft.sendScopeInTokenExchange).toBe(true);
+    });
+
+    it("only reads the granted scope from the token response for Google", () => {
+      // Google's token response echoes back the granted `scope`; Microsoft's
+      // does not, so the descriptor's own `scopes` constant is used instead.
+      expect(OAUTH_PROVIDERS.google.scopeFromResponse).toBe(true);
+      expect(OAUTH_PROVIDERS.microsoft.scopeFromResponse).toBe(false);
+    });
+
     it("exposes the connection type equal to the id", () => {
       expect(OAUTH_PROVIDERS.google.connectionType).toBe("google");
       expect(OAUTH_PROVIDERS.microsoft.connectionType).toBe("microsoft");

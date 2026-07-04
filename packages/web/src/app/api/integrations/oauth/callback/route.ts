@@ -262,7 +262,6 @@ export async function GET(request: Request) {
   // Resolve the descriptor; fail-safe to Google (matches the pendingType
   // default). getOAuthProvider avoids object-injection on pendingType.
   const oauthProvider = getOAuthProvider(pendingType) ?? OAUTH_PROVIDERS.google;
-  const isMicrosoft = oauthProvider.id === "microsoft";
 
   // 5. Read OAuth settings for the determined provider
   const settings = await getOAuthSettings(oauthProvider.id);
@@ -290,91 +289,65 @@ export async function GET(request: Request) {
   // way to recover except restarting the connect flow, and would leave the
   // pending connection row behind for the 15-minute GC to reap.
   try {
-    if (isMicrosoft) {
-      // ── Microsoft authorization-code exchange ────────────────────────────
-      const msSettings = settings as MicrosoftOAuthSettings;
-      const tenantId = msSettings.tenantId;
+    // ── Authorization-code exchange, driven by the provider descriptor ─────
+    // Google and Microsoft differ only in DATA, not control flow: whether the
+    // token request body includes `scope` (Microsoft) and whether the
+    // granted scope used for storage comes from the token response (Google)
+    // or the descriptor's own scopes constant (Microsoft). tokenUrl({}) is
+    // safe to call unconditionally — Google's implementation ignores
+    // tenantId (see oauth-providers.test.ts "ignores tenantId for Google").
+    const msSettings = settings as MicrosoftOAuthSettings;
+    const tenantId = oauthProvider.hasTenant ? msSettings.tenantId : undefined;
 
-      const tokenBody = new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        client_id: settings.clientId,
-        client_secret: settings.clientSecret,
-        redirect_uri: redirectUri,
-        scope: oauthProvider.scopes,
-      });
+    const tokenBody = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: settings.clientId,
+      client_secret: settings.clientSecret,
+      redirect_uri: redirectUri,
+      ...(oauthProvider.sendScopeInTokenExchange ? { scope: oauthProvider.scopes } : {}),
+    });
 
-      const tokenResponse = await fetch(oauthProvider.tokenUrl({ tenantId }), {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: tokenBody.toString(),
-      });
+    const tokenResponse = await fetch(oauthProvider.tokenUrl({ tenantId }), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: tokenBody.toString(),
+    });
 
-      if (!tokenResponse.ok) {
-        await failOAuthExchange(session.user.id!, "microsoft", pendingId, "token_exchange_failed");
-        return errorRedirect(origin, "token_exchange_failed");
-      }
-
-      const tokenData = await tokenResponse.json();
-      assertValidTokenResponse(tokenData);
-      access_token = tokenData.access_token;
-      refresh_token = tokenData.refresh_token;
-      expires_in = tokenData.expires_in;
-      scope = oauthProvider.scopes;
-
-      // Fetch profile from Microsoft Graph
-      const profileResponse = await fetch(oauthProvider.profileUrl, {
-        headers: { Authorization: `Bearer ${access_token}` },
-      });
-
-      if (!profileResponse.ok) {
-        await failOAuthExchange(session.user.id!, "microsoft", pendingId, "profile_fetch_failed");
-        return errorRedirect(origin, "profile_fetch_failed");
-      }
-
-      const profileData = await profileResponse.json();
-      emailAddress = oauthProvider.extractEmail(profileData) ?? "";
-    } else {
-      // ── Google authorization-code exchange ───────────────────────────────
-      const tokenBody = new URLSearchParams({
-        code,
-        client_id: settings.clientId,
-        client_secret: settings.clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-      });
-
-      const tokenResponse = await fetch(oauthProvider.tokenUrl({}), {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: tokenBody.toString(),
-      });
-
-      if (!tokenResponse.ok) {
-        await failOAuthExchange(session.user.id!, "google", pendingId, "token_exchange_failed");
-        return errorRedirect(origin, "token_exchange_failed");
-      }
-
-      const tokenData = await tokenResponse.json();
-      assertValidTokenResponse(tokenData);
-      access_token = tokenData.access_token;
-      refresh_token = tokenData.refresh_token;
-      expires_in = tokenData.expires_in;
-      scope = tokenData.scope;
-
-      // Fetch email address from Gmail profile
-      const profileResponse = await fetch(oauthProvider.profileUrl, {
-        headers: { Authorization: `Bearer ${access_token}` },
-      });
-
-      if (!profileResponse.ok) {
-        await failOAuthExchange(session.user.id!, "google", pendingId, "profile_fetch_failed");
-        return errorRedirect(origin, "profile_fetch_failed");
-      }
-
-      const profileData = await profileResponse.json();
-      emailAddress = oauthProvider.extractEmail(profileData) ?? "";
+    if (!tokenResponse.ok) {
+      await failOAuthExchange(
+        session.user.id!,
+        oauthProvider.id,
+        pendingId,
+        "token_exchange_failed"
+      );
+      return errorRedirect(origin, "token_exchange_failed");
     }
+
+    const tokenData = await tokenResponse.json();
+    assertValidTokenResponse(tokenData);
+    access_token = tokenData.access_token;
+    refresh_token = tokenData.refresh_token;
+    expires_in = tokenData.expires_in;
+    scope = oauthProvider.scopeFromResponse ? tokenData.scope : oauthProvider.scopes;
+
+    // Fetch the mailbox profile and extract the email address.
+    const profileResponse = await fetch(oauthProvider.profileUrl, {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+
+    if (!profileResponse.ok) {
+      await failOAuthExchange(
+        session.user.id!,
+        oauthProvider.id,
+        pendingId,
+        "profile_fetch_failed"
+      );
+      return errorRedirect(origin, "profile_fetch_failed");
+    }
+
+    const profileData = await profileResponse.json();
+    emailAddress = oauthProvider.extractEmail(profileData) ?? "";
 
     // 7. Persist integration — UPDATE pending record if possible, otherwise INSERT
     const expiresAt = computeExpiresAt(expires_in);

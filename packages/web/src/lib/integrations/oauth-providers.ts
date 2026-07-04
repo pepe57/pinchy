@@ -69,6 +69,21 @@ export interface OAuthProviderDescriptor {
   scopes: string;
   /** Whether the provider is tenant-scoped (Microsoft) or not (Google). */
   hasTenant: boolean;
+  /**
+   * Whether the token-exchange request body must include a `scope` param.
+   * Microsoft requires it (its token endpoint validates the requested scope
+   * against the app registration); Google's token endpoint derives the
+   * granted scope from the authorization code itself and doesn't take a
+   * `scope` param on this grant type.
+   */
+  sendScopeInTokenExchange: boolean;
+  /**
+   * Whether the granted scope used for the stored credentials should be read
+   * from the token response body (Google, which echoes back `scope`) or from
+   * this descriptor's own `scopes` constant (Microsoft, whose token response
+   * does not echo the granted scope back).
+   */
+  scopeFromResponse: boolean;
   /** integrationConnections.type value ( == id, but explicit for clarity). */
   connectionType: string;
   /** Mailbox provider recorded in connection data / audit rows. */
@@ -127,6 +142,8 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderDescriptor> =
     settingsKey: GOOGLE_OAUTH_SETTINGS_KEY,
     scopes: GOOGLE_OAUTH_SCOPES,
     hasTenant: false,
+    sendScopeInTokenExchange: false,
+    scopeFromResponse: true,
     connectionType: "google",
     auditProvider: "gmail",
     docsPath: "/guides/connect-email-google",
@@ -150,6 +167,8 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderDescriptor> =
     settingsKey: MICROSOFT_OAUTH_SETTINGS_KEY,
     scopes: MICROSOFT_OAUTH_SCOPES,
     hasTenant: true,
+    sendScopeInTokenExchange: true,
+    scopeFromResponse: false,
     connectionType: "microsoft",
     auditProvider: "outlook",
     docsPath: "/guides/connect-email-microsoft",
