@@ -784,4 +784,26 @@ describe("SettingsIntegrations — OAuth callback errors", () => {
       );
     });
   });
+
+  it("shows a specific message when the token response was unreadable (oauthError='invalid_token_response')", async () => {
+    mockFetchConnections([]);
+    const { toast } = await import("sonner");
+    render(<SettingsIntegrations oauthError="invalid_token_response" />);
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Sign-in worked, but the provider sent back a response Pinchy couldn't read. Please try connecting again."
+      );
+    });
+  });
+
+  it("shows a specific message when no refresh token was returned (oauthError='missing_refresh_token')", async () => {
+    mockFetchConnections([]);
+    const { toast } = await import("sonner");
+    render(<SettingsIntegrations oauthError="missing_refresh_token" />);
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        "Sign-in worked, but the provider didn't return the long-lived token Pinchy needs to keep the mailbox connected. Please try again and be sure to grant offline access."
+      );
+    });
+  });
 });

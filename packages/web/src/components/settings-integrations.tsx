@@ -77,6 +77,14 @@ const OAUTH_ERROR_MESSAGES = new Map<string, string>([
     "token_exchange_failed",
     "Sign-in worked, but Pinchy couldn't finish connecting — double-check the Client Secret under Connected apps, then try again.",
   ],
+  [
+    "invalid_token_response",
+    "Sign-in worked, but the provider sent back a response Pinchy couldn't read. Please try connecting again.",
+  ],
+  [
+    "missing_refresh_token",
+    "Sign-in worked, but the provider didn't return the long-lived token Pinchy needs to keep the mailbox connected. Please try again and be sure to grant offline access.",
+  ],
   ["state_mismatch", "OAuth session expired. Please try again."],
   ["not_configured", "OAuth is not configured."],
   ["connection_not_found", "Connection not found. Please try again."],
