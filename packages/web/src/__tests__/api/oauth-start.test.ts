@@ -309,6 +309,24 @@ describe("GET /api/integrations/oauth/start", () => {
     const location = res.headers.get("location") ?? "";
     expect(new URL(location).host).toBe("accounts.google.com");
   });
+
+  it("redirects to /settings with not_configured error for an unknown ?provider value instead of a raw 500", async () => {
+    // Regression test: an unvalidated `provider` cast used to reach
+    // getOAuthSettings(provider as "google" | "microsoft") with an unknown
+    // value (e.g. "outlook"), which looks up an undefined settings key and
+    // throws UNDEFINED_VALUE in the DB driver instead of following this
+    // route's redirect-on-failure contract.
+    const { GET } = await import("@/app/api/integrations/oauth/start/route");
+    const res = await GET(
+      makeRequest("https://local.heypinchy.com:8443/api/integrations/oauth/start?provider=outlook")
+    );
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/settings");
+    expect(location).toContain("error=not_configured");
+    // The unknown provider must be rejected before any settings lookup.
+    expect(mockGetOAuthSettings).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/integrations/oauth/start (reconnect)", () => {

@@ -50,7 +50,17 @@ export async function GET(request: Request) {
 
   const provider = requestUrl.searchParams.get("provider") ?? "google";
 
-  const settings = await getOAuthSettings(provider as "google" | "microsoft");
+  // Validate the provider before it reaches getOAuthSettings. An unrecognized
+  // value (e.g. "outlook") used to be cast straight through with `as "google"
+  // | "microsoft"`, so the settings lookup ran with an undefined settings key
+  // and threw a raw UNDEFINED_VALUE DB error instead of following this
+  // route's redirect-on-failure contract.
+  const oauthProvider = getOAuthProvider(provider);
+  if (!oauthProvider) {
+    return errorRedirect(origin, "not_configured");
+  }
+
+  const settings = await getOAuthSettings(oauthProvider.id);
   if (!settings) {
     return errorRedirect(origin, "not_configured");
   }
@@ -93,10 +103,6 @@ export async function GET(request: Request) {
         )
       );
   }
-
-  // Resolve the provider descriptor (defaults to Google, matching the
-  // `?provider` default above). getOAuthProvider avoids object-injection.
-  const oauthProvider = getOAuthProvider(provider) ?? OAUTH_PROVIDERS.google;
 
   const state = randomBytes(32).toString("hex");
   const redirectUri = `${origin}/api/integrations/oauth/callback`;
