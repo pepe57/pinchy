@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/api-auth";
 import {
@@ -156,16 +156,17 @@ export async function POST(request: NextRequest) {
   // settingsKey is the same value as the audit rows recorded before this
   // refactor (google_oauth_credentials / microsoft_oauth_credentials).
   const settingsKey = getOAuthProvider(provider)!.settingsKey;
-  after(() =>
-    appendAuditLog({
-      actorType: "user",
-      actorId: sessionOrError.user.id!,
-      resource: `integration:${provider}-oauth`,
-      eventType: "config.changed",
-      detail: { key: settingsKey, provider },
-      outcome: "success",
-    })
-  );
+  // Saving OAuth app settings is idempotent, so an audit-write failure is
+  // allowed to surface as a 500 rather than being dropped fire-and-forget —
+  // the admin can safely retry the same save.
+  await appendAuditLog({
+    actorType: "user",
+    actorId: sessionOrError.user.id!,
+    resource: `integration:${provider}-oauth`,
+    eventType: "config.changed",
+    detail: { key: settingsKey, provider },
+    outcome: "success",
+  });
 
   return NextResponse.json({ success: true });
 }
@@ -183,16 +184,16 @@ export async function DELETE(request: NextRequest) {
   // are left untouched but will need to be reconnected once a new app is set.
   await deleteOAuthSettings(provider);
 
-  after(() =>
-    appendAuditLog({
-      actorType: "user",
-      actorId: sessionOrError.user.id!,
-      resource: `integration:${provider}-oauth`,
-      eventType: "config.changed",
-      detail: { action: "oauth_app_reset", provider },
-      outcome: "success",
-    })
-  );
+  // Idempotent, same reasoning as POST above: let an audit-write failure
+  // surface as a 500 instead of dropping it fire-and-forget.
+  await appendAuditLog({
+    actorType: "user",
+    actorId: sessionOrError.user.id!,
+    resource: `integration:${provider}-oauth`,
+    eventType: "config.changed",
+    detail: { action: "oauth_app_reset", provider },
+    outcome: "success",
+  });
 
   return NextResponse.json({ success: true });
 }

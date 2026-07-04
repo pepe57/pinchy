@@ -55,7 +55,6 @@ import {
 } from "@/lib/integrations/oauth-settings";
 import { appendAuditLog } from "@/lib/audit";
 import { validateMicrosoftTenant } from "@/lib/integrations/oauth-preflight";
-import { after } from "next/server";
 
 const adminSession = {
   user: { id: "admin-1", name: "Admin", role: "admin" },
@@ -389,10 +388,6 @@ describe("POST /api/settings/oauth", () => {
     });
     await POST(req);
 
-    // Flush after() callbacks
-    const afterCb = vi.mocked(after).mock.calls[0]?.[0];
-    if (typeof afterCb === "function") await afterCb();
-
     expect(appendAuditLog).toHaveBeenCalledWith({
       actorType: "user",
       actorId: "admin-1",
@@ -508,10 +503,6 @@ describe("POST /api/settings/oauth", () => {
     });
     await POST(req);
 
-    // Flush after() callbacks
-    const afterCb = vi.mocked(after).mock.calls[0]?.[0];
-    if (typeof afterCb === "function") await afterCb();
-
     expect(appendAuditLog).toHaveBeenCalledWith({
       actorType: "user",
       actorId: "admin-1",
@@ -520,6 +511,27 @@ describe("POST /api/settings/oauth", () => {
       detail: { key: "microsoft_oauth_credentials", provider: "microsoft" },
       outcome: "success",
     });
+  });
+
+  it("propagates the error when the audit write fails after saving (no silent fire-and-forget)", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(saveOAuthSettings).mockResolvedValueOnce(undefined);
+    vi.mocked(appendAuditLog).mockRejectedValueOnce(new Error("audit db unavailable"));
+
+    const req = new NextRequest("http://localhost/api/settings/oauth", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "google",
+        clientId: "my-client-id",
+        clientSecret: "my-secret",
+      }),
+    });
+
+    // The settings save is idempotent, so an audit-write failure should
+    // surface as a rejection (Next.js turns this into a 500) rather than
+    // being silently dropped via a fire-and-forget after() callback.
+    await expect(POST(req)).rejects.toThrow("audit db unavailable");
+    expect(saveOAuthSettings).toHaveBeenCalled();
   });
 
   it("GET google provider still works (no regression)", async () => {
@@ -740,6 +752,19 @@ describe("DELETE /api/settings/oauth", () => {
     expect(deleteOAuthSettings).toHaveBeenCalledWith("microsoft");
   });
 
+  it("propagates the error when the audit write fails after resetting (no silent fire-and-forget)", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
+    vi.mocked(deleteOAuthSettings).mockResolvedValueOnce(undefined);
+    vi.mocked(appendAuditLog).mockRejectedValueOnce(new Error("audit db unavailable"));
+
+    const req = new NextRequest("http://localhost/api/settings/oauth?provider=microsoft", {
+      method: "DELETE",
+    });
+
+    await expect(DELETE(req)).rejects.toThrow("audit db unavailable");
+    expect(deleteOAuthSettings).toHaveBeenCalled();
+  });
+
   it("logs an audit event after resetting", async () => {
     vi.mocked(auth.api.getSession).mockResolvedValueOnce(adminSession);
     vi.mocked(deleteOAuthSettings).mockResolvedValueOnce(undefined);
@@ -748,10 +773,6 @@ describe("DELETE /api/settings/oauth", () => {
       method: "DELETE",
     });
     await DELETE(req);
-
-    // Flush after() callbacks
-    const afterCb = vi.mocked(after).mock.calls[0]?.[0];
-    if (typeof afterCb === "function") await afterCb();
 
     expect(appendAuditLog).toHaveBeenCalledWith({
       actorType: "user",
