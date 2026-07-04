@@ -12,6 +12,7 @@ import { db } from "@/db";
 import { integrationConnections } from "@/db/schema";
 import { redactEmail } from "@/lib/audit";
 import { deferAuditLog } from "@/lib/audit-deferred";
+import { computeExpiresAt } from "@/lib/integrations/oauth-token";
 import { clearIntegrationAuthError } from "@/lib/integrations/auth-state";
 import { eq, and } from "drizzle-orm";
 
@@ -57,6 +58,31 @@ async function deletePendingConnection(pendingId: string | undefined) {
     .where(
       and(eq(integrationConnections.id, pendingId), eq(integrationConnections.status, "pending"))
     );
+}
+
+// Shared failure path for both exchange steps (token exchange, profile
+// fetch) across both providers — the audit shape and cleanup are identical
+// regardless of which provider or which step failed; only the reason string
+// differs. Kept as one function so the two steps can't drift per provider.
+async function failOAuthExchange(
+  actorId: string,
+  providerId: string,
+  pendingId: string | undefined,
+  reason: "token_exchange_failed" | "profile_fetch_failed"
+) {
+  deferAuditLog({
+    actorType: "user",
+    actorId,
+    eventType: "config.changed",
+    resource: `integration:${providerId}`,
+    detail: {
+      action: "integration_oauth_failed",
+      type: providerId,
+      error: { message: reason },
+    },
+    outcome: "failure",
+  });
+  await deletePendingConnection(pendingId);
 }
 
 /**
@@ -223,19 +249,7 @@ export async function GET(request: Request) {
     });
 
     if (!tokenResponse.ok) {
-      deferAuditLog({
-        actorType: "user",
-        actorId: session.user.id!,
-        eventType: "config.changed",
-        resource: "integration:microsoft",
-        detail: {
-          action: "integration_oauth_failed",
-          type: "microsoft",
-          error: { message: "token_exchange_failed" },
-        },
-        outcome: "failure",
-      });
-      await deletePendingConnection(pendingId);
+      await failOAuthExchange(session.user.id!, "microsoft", pendingId, "token_exchange_failed");
       return errorRedirect(origin, "token_exchange_failed");
     }
 
@@ -251,19 +265,7 @@ export async function GET(request: Request) {
     });
 
     if (!profileResponse.ok) {
-      deferAuditLog({
-        actorType: "user",
-        actorId: session.user.id!,
-        eventType: "config.changed",
-        resource: "integration:microsoft",
-        detail: {
-          action: "integration_oauth_failed",
-          type: "microsoft",
-          error: { message: "profile_fetch_failed" },
-        },
-        outcome: "failure",
-      });
-      await deletePendingConnection(pendingId);
+      await failOAuthExchange(session.user.id!, "microsoft", pendingId, "profile_fetch_failed");
       return errorRedirect(origin, "profile_fetch_failed");
     }
 
@@ -286,19 +288,7 @@ export async function GET(request: Request) {
     });
 
     if (!tokenResponse.ok) {
-      deferAuditLog({
-        actorType: "user",
-        actorId: session.user.id!,
-        eventType: "config.changed",
-        resource: "integration:google",
-        detail: {
-          action: "integration_oauth_failed",
-          type: "google",
-          error: { message: "token_exchange_failed" },
-        },
-        outcome: "failure",
-      });
-      await deletePendingConnection(pendingId);
+      await failOAuthExchange(session.user.id!, "google", pendingId, "token_exchange_failed");
       return errorRedirect(origin, "token_exchange_failed");
     }
 
@@ -314,19 +304,7 @@ export async function GET(request: Request) {
     });
 
     if (!profileResponse.ok) {
-      deferAuditLog({
-        actorType: "user",
-        actorId: session.user.id!,
-        eventType: "config.changed",
-        resource: "integration:google",
-        detail: {
-          action: "integration_oauth_failed",
-          type: "google",
-          error: { message: "profile_fetch_failed" },
-        },
-        outcome: "failure",
-      });
-      await deletePendingConnection(pendingId);
+      await failOAuthExchange(session.user.id!, "google", pendingId, "profile_fetch_failed");
       return errorRedirect(origin, "profile_fetch_failed");
     }
 
@@ -335,7 +313,7 @@ export async function GET(request: Request) {
   }
 
   // 7. Persist integration — UPDATE pending record if possible, otherwise INSERT
-  const expiresAt = new Date(Date.now() + expires_in * 1000).toISOString();
+  const expiresAt = computeExpiresAt(expires_in);
   const encryptedCredentials = encrypt(
     JSON.stringify({
       accessToken: access_token,
@@ -462,35 +440,20 @@ export async function GET(request: Request) {
     // is HMAC-signed, so we cannot redact later. redactEmail() gives us a
     // keyed hash + masked preview; the connectionId in `resource` is enough
     // to look up the live mailbox name from the integrations table while it
-    // exists. Google and Microsoft use different audit conventions: Google
-    // emits the dedicated `integration.created` event; Microsoft (added later)
-    // uses the generic `config.changed` event with an `action` discriminator.
-    if (isMicrosoft) {
-      deferAuditLog({
-        actorType: "user",
-        actorId: session.user.id!,
-        eventType: "config.changed",
-        resource: `integration:${connection.id}`,
-        detail: {
-          action: "integration_created",
-          type: connectionType,
-          ...redactEmail(emailAddress),
-        },
-        outcome: "success",
-      });
-    } else {
-      deferAuditLog({
-        actorType: "user",
-        actorId: session.user.id!,
-        eventType: "integration.created",
-        resource: `integration:${connection.id}`,
-        detail: {
-          type: "google",
-          ...redactEmail(emailAddress),
-        },
-        outcome: "success",
-      });
-    }
+    // exists. Every provider emits the same `integration.created` event so an
+    // auditor filtering by eventType sees every mailbox connection
+    // regardless of provider; `type` in detail distinguishes them.
+    deferAuditLog({
+      actorType: "user",
+      actorId: session.user.id!,
+      eventType: "integration.created",
+      resource: `integration:${connection.id}`,
+      detail: {
+        type: connectionType,
+        ...redactEmail(emailAddress),
+      },
+      outcome: "success",
+    });
   }
 
   // 9. Clean up cookies and redirect

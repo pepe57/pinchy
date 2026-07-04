@@ -921,13 +921,18 @@ describe("GET /api/integrations/oauth/callback", () => {
         )
       );
 
+      // Fresh-connect audit uses the same eventType for every provider
+      // (integration.created) so an auditor filtering by that eventType sees
+      // every mailbox connection regardless of provider — see the "audit
+      // eventType consistency" describe block below for the Google
+      // comparison.
       expect(mockAppendAuditLog).toHaveBeenCalledWith(
         expect.objectContaining({
           actorId: "admin-1",
+          eventType: "integration.created",
           resource: `integration:${mockMsConnection.id}`,
           outcome: "success",
           detail: expect.objectContaining({
-            action: "integration_created",
             type: "microsoft",
           }),
         })

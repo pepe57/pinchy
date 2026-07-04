@@ -25,14 +25,27 @@ interface MicrosoftCredentials {
   [k: string]: unknown;
 }
 
-// Per-connectionId in-flight refresh tracker. When a Google access token has
-// expired and multiple plugin calls arrive concurrently, only the first caller
-// fires refreshAccessToken; the rest await the same Promise and observe the
-// same fresh token. Without this, every concurrent caller would burn a refresh
-// against Google with the same refresh_token, and refresh-token rotation means
-// all but one fail with invalid_grant — corrupting the stored credential bundle.
-// See issue #237.
-const inFlightGoogleRefreshes = new Map<string, Promise<GoogleCredentials>>();
+// Per-connectionId in-flight refresh tracker, shared by both providers. When
+// an access token has expired and multiple plugin calls arrive concurrently,
+// only the first caller runs `run()`; the rest await the same Promise and
+// observe the same fresh token. Without this, every concurrent caller would
+// burn a refresh against the provider with the same refresh_token, and
+// refresh-token rotation means all but one fail with invalid_grant —
+// corrupting the stored credential bundle. See issue #237. Each provider
+// keeps its own Map (and Credentials type) since a connectionId's provider
+// never changes at runtime, but the single-flight bookkeeping is identical.
+function createRefreshDedup<T>() {
+  const inFlight = new Map<string, Promise<T>>();
+  return function dedupe(connectionId: string, run: () => Promise<T>): Promise<T> {
+    const existing = inFlight.get(connectionId);
+    if (existing) return existing;
+    const promise = run().finally(() => inFlight.delete(connectionId));
+    inFlight.set(connectionId, promise);
+    return promise;
+  };
+}
+
+const dedupeGoogleRefresh = createRefreshDedup<GoogleCredentials>();
 
 // Thrown when a token refresh is actually required (the access token is
 // expired) but the OAuth app settings needed to perform that refresh are
@@ -54,10 +67,7 @@ async function refreshGoogleCredentials(
   connectionId: string,
   current: GoogleCredentials
 ): Promise<GoogleCredentials> {
-  const existing = inFlightGoogleRefreshes.get(connectionId);
-  if (existing) return existing;
-
-  const promise = (async () => {
+  return dedupeGoogleRefresh(connectionId, async () => {
     try {
       const oauthSettings = await getOAuthSettings("google");
       if (!oauthSettings) {
@@ -96,29 +106,16 @@ async function refreshGoogleCredentials(
       console.error("Google OAuth token refresh failed:", err);
       return current;
     }
-  })().finally(() => {
-    inFlightGoogleRefreshes.delete(connectionId);
   });
-
-  inFlightGoogleRefreshes.set(connectionId, promise);
-  return promise;
 }
 
-// Per-connectionId in-flight refresh tracker for Microsoft OAuth tokens.
-// Microsoft rotates refresh tokens on every use — concurrent callers with
-// the same refresh token would all fail with invalid_grant except one.
-// This dedup map ensures only one refresh fires; all concurrent callers
-// share the same Promise and receive the fresh token bundle.
-const inFlightMicrosoftRefreshes = new Map<string, Promise<MicrosoftCredentials>>();
+const dedupeMicrosoftRefresh = createRefreshDedup<MicrosoftCredentials>();
 
 async function refreshMicrosoftCredentials(
   connectionId: string,
   current: MicrosoftCredentials
 ): Promise<MicrosoftCredentials> {
-  const existing = inFlightMicrosoftRefreshes.get(connectionId);
-  if (existing) return existing;
-
-  const promise = (async () => {
+  return dedupeMicrosoftRefresh(connectionId, async () => {
     try {
       const oauthSettings = await getOAuthSettings("microsoft");
       if (!oauthSettings) {
@@ -162,12 +159,7 @@ async function refreshMicrosoftCredentials(
       console.error("Microsoft OAuth token refresh failed:", err);
       return current;
     }
-  })().finally(() => {
-    inFlightMicrosoftRefreshes.delete(connectionId);
   });
-
-  inFlightMicrosoftRefreshes.set(connectionId, promise);
-  return promise;
 }
 
 export async function GET(
