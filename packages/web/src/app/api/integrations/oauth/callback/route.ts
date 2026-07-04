@@ -64,6 +64,14 @@ async function deletePendingConnection(pendingId: string | undefined) {
 // fetch) across both providers — the audit shape and cleanup are identical
 // regardless of which provider or which step failed; only the reason string
 // differs. Kept as one function so the two steps can't drift per provider.
+//
+// eventType is integration.created — the SAME event as the fresh-connect
+// success path a few hundred lines below, differing only by `outcome`.
+// Success and failure of the same logical action (mailbox onboarding) must
+// share the integration.* family so an auditor filtering
+// eventType=integration.created sees both outcomes. config.changed was
+// retired for integrations in v0.5.4 (see docs/concepts/audit-trail.mdx and
+// docs/guides/upgrading.mdx) — do not reintroduce it here.
 async function failOAuthExchange(
   actorId: string,
   providerId: string,
@@ -73,12 +81,11 @@ async function failOAuthExchange(
   deferAuditLog({
     actorType: "user",
     actorId,
-    eventType: "config.changed",
+    eventType: "integration.created",
     resource: `integration:${providerId}`,
     detail: {
-      action: "integration_oauth_failed",
       type: providerId,
-      error: { message: reason },
+      reason,
     },
     outcome: "failure",
   });

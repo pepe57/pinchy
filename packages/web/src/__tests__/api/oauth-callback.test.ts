@@ -417,7 +417,7 @@ describe("GET /api/integrations/oauth/callback", () => {
     expect(mockDeleteWhere).toHaveBeenCalled();
   });
 
-  it("logs audit failure when token exchange fails", async () => {
+  it("logs audit failure when token exchange fails, under eventType integration.created (same family as the success path, not config.changed)", async () => {
     mockGetSession.mockResolvedValue(adminSession());
     mockGetOAuthSettings.mockResolvedValue({
       clientId: "test-client-id",
@@ -433,8 +433,22 @@ describe("GET /api/integrations/oauth/callback", () => {
     expect(mockAppendAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         actorId: "admin-1",
+        eventType: "integration.created",
+        resource: "integration:google",
         outcome: "failure",
+        detail: expect.objectContaining({
+          type: "google",
+          reason: "token_exchange_failed",
+        }),
       })
+    );
+
+    // Regression guard: this failure must never be filed under config.changed
+    // — that vocabulary was retired for integrations in v0.5.4 (see
+    // docs/concepts/audit-trail.mdx) and consumers filtering the
+    // integration.* family would silently lose OAuth-failure visibility.
+    expect(mockAppendAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "config.changed" })
     );
   });
 
@@ -463,7 +477,7 @@ describe("GET /api/integrations/oauth/callback", () => {
     expect(mockDeleteWhere).toHaveBeenCalled();
   });
 
-  it("logs audit failure when profile fetch fails", async () => {
+  it("logs audit failure when profile fetch fails, under eventType integration.created (same family as the success path, not config.changed)", async () => {
     mockGetSession.mockResolvedValue(adminSession());
     mockGetOAuthSettings.mockResolvedValue({
       clientId: "test-client-id",
@@ -480,8 +494,22 @@ describe("GET /api/integrations/oauth/callback", () => {
     expect(mockAppendAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         actorId: "admin-1",
+        eventType: "integration.created",
+        resource: "integration:google",
         outcome: "failure",
+        detail: expect.objectContaining({
+          type: "google",
+          reason: "profile_fetch_failed",
+        }),
       })
+    );
+
+    // Regression guard: this failure must never be filed under config.changed
+    // — that vocabulary was retired for integrations in v0.5.4 (see
+    // docs/concepts/audit-trail.mdx) and consumers filtering the
+    // integration.* family would silently lose OAuth-failure visibility.
+    expect(mockAppendAuditLog).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "config.changed" })
     );
   });
 
@@ -943,7 +971,7 @@ describe("GET /api/integrations/oauth/callback", () => {
       expect(detail).toHaveProperty("emailHash");
     });
 
-    it("failure: token_exchange_failed uses resource 'integration:microsoft'", async () => {
+    it("failure: token_exchange_failed uses resource 'integration:microsoft' and eventType integration.created (same family as the success path, not config.changed)", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         json: vi.fn().mockResolvedValue({ error: "invalid_grant" }),
@@ -958,13 +986,23 @@ describe("GET /api/integrations/oauth/callback", () => {
 
       expect(mockAppendAuditLog).toHaveBeenCalledWith(
         expect.objectContaining({
+          eventType: "integration.created",
           resource: "integration:microsoft",
           outcome: "failure",
           detail: expect.objectContaining({
-            action: "integration_oauth_failed",
             type: "microsoft",
+            reason: "token_exchange_failed",
           }),
         })
+      );
+
+      // Regression guard: this failure must never be filed under
+      // config.changed — that vocabulary was retired for integrations in
+      // v0.5.4 (see docs/concepts/audit-trail.mdx) and consumers filtering
+      // the integration.* family would silently lose OAuth-failure
+      // visibility.
+      expect(mockAppendAuditLog).not.toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: "config.changed" })
       );
 
       // The abandoned pending row must be cleaned up, not left to the 15-minute GC.
