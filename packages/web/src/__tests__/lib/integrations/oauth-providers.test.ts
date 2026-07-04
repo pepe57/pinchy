@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   OAUTH_PROVIDERS,
   getOAuthProvider,
@@ -203,6 +203,68 @@ describe("OAUTH_PROVIDERS descriptor", () => {
       expect(OAUTH_PROVIDERS.google.extractEmail(null)).toBeUndefined();
       expect(OAUTH_PROVIDERS.microsoft.extractEmail(undefined)).toBeUndefined();
       expect(OAUTH_PROVIDERS.google.extractEmail("nope")).toBeUndefined();
+    });
+  });
+
+  describe("validateConfig", () => {
+    const originalFetch = global.fetch;
+
+    beforeEach(() => {
+      global.fetch = vi.fn();
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    it("google has no validateConfig (nothing to check)", () => {
+      expect(OAUTH_PROVIDERS.google.validateConfig).toBeUndefined();
+    });
+
+    it("microsoft validateConfig returns { ok: false, error } with the exact message when the tenant probe returns 400", async () => {
+      vi.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 400 } as Response);
+
+      const result = await OAUTH_PROVIDERS.microsoft.validateConfig?.({
+        tenantId: "bad-tenant-id",
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        error:
+          'Tenant ID "bad-tenant-id" was not found. Make sure you pasted the ' +
+          "Directory (tenant) ID from Azure — not the Application (client) ID.",
+      });
+    });
+
+    it("microsoft validateConfig returns { ok: true } for a well-known tenant without hitting the network", async () => {
+      const result = await OAUTH_PROVIDERS.microsoft.validateConfig?.({
+        tenantId: "organizations",
+      });
+
+      expect(result).toEqual({ ok: true });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it("microsoft validateConfig fails open ({ ok: true }) when the tenant probe returns a 5xx", async () => {
+      vi.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 500 } as Response);
+
+      const result = await OAUTH_PROVIDERS.microsoft.validateConfig?.({
+        tenantId: "some-tenant",
+      });
+
+      expect(result).toEqual({ ok: true });
+    });
+
+    it("microsoft validateConfig fails open ({ ok: true }) on a network error", async () => {
+      vi.mocked(global.fetch).mockRejectedValueOnce(new Error("network blip"));
+
+      const result = await OAUTH_PROVIDERS.microsoft.validateConfig?.({
+        tenantId: "some-tenant",
+      });
+
+      expect(result).toEqual({ ok: true });
     });
   });
 });

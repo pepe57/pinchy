@@ -6,7 +6,6 @@ import {
   deleteOAuthSettings,
 } from "@/lib/integrations/oauth-settings";
 import { getOAuthProvider } from "@/lib/integrations/oauth-providers";
-import { validateMicrosoftTenant } from "@/lib/integrations/oauth-preflight";
 import { appendAuditLog } from "@/lib/audit";
 import { parseRequestBody } from "@/lib/api-validation";
 import { saveOAuthSchema } from "@/lib/schemas/oauth-settings";
@@ -57,31 +56,22 @@ export async function GET(request: NextRequest) {
   }
 
   const connectionCount = await countProviderConnections(provider);
-
-  // Tenant-scoped providers (Microsoft) also surface the stored tenantId so
-  // the edit dialog can prefill it. The client secret is never returned.
-  if (provider === "microsoft") {
-    const settings = await getOAuthSettings("microsoft");
-    if (!settings) {
-      return NextResponse.json({ configured: false, clientId: "", connectionCount });
-    }
-    return NextResponse.json({
-      configured: true,
-      clientId: settings.clientId,
-      tenantId: settings.tenantId ?? "",
-      connectionCount,
-    });
-  }
+  const oauthProvider = getOAuthProvider(provider)!;
 
   const settings = await getOAuthSettings(provider);
   if (!settings) {
     return NextResponse.json({ configured: false, clientId: "", connectionCount });
   }
 
+  // Tenant-scoped providers (Microsoft) also surface the stored tenantId so
+  // the edit dialog can prefill it. The client secret is never returned.
   return NextResponse.json({
     configured: true,
     clientId: settings.clientId,
     connectionCount,
+    ...(oauthProvider.hasTenant
+      ? { tenantId: (settings as { tenantId?: string }).tenantId ?? "" }
+      : {}),
   });
 }
 
@@ -92,6 +82,8 @@ export async function POST(request: NextRequest) {
   const parsed = await parseRequestBody(saveOAuthSchema, request);
   if ("error" in parsed) return parsed.error;
   const data = parsed.data;
+  // getOAuthProvider is non-null: the schema restricts provider to google/microsoft.
+  const oauthProvider = getOAuthProvider(data.provider)!;
 
   // An omitted clientSecret means "keep the current one" so an admin can
   // update the Client ID (and, for Microsoft, the Tenant ID) without
@@ -110,23 +102,19 @@ export async function POST(request: NextRequest) {
     clientSecret = existing.clientSecret;
   }
 
-  // Pre-flight tenant check (Microsoft only): AADSTS90002 ("tenant not found")
-  // is a pre-authorize error on Microsoft's own authorize endpoint, so it never
-  // redirects back to our callback — a wrong Tenant ID would otherwise trap the
-  // admin on Microsoft's error page with no way for Pinchy to catch it. Catching
-  // it here, at save time, turns it into an inline field error instead. Fails
-  // open on network/unknown errors — only a definitive "not_found" blocks save.
-  if (data.provider === "microsoft" && data.tenantId) {
-    const tenant = await validateMicrosoftTenant(data.tenantId);
-    if (tenant.ok === false) {
-      return NextResponse.json(
-        {
-          error:
-            `Tenant ID "${data.tenantId}" was not found. Make sure you pasted the ` +
-            `Directory (tenant) ID from Azure — not the Application (client) ID.`,
-        },
-        { status: 400 }
-      );
+  // Pre-flight provider-specific config check (e.g. Microsoft's tenant id):
+  // delegated to the descriptor so provider-specific validation lives in
+  // oauth-providers.ts alongside extractEmail/authorizeUrl, instead of a
+  // hardcoded `provider === "microsoft"` branch here. Undefined method or
+  // { ok: true } allows the save through unchanged. Only invoked when a
+  // tenantId is actually present, so providers without one (and a blank
+  // Microsoft tenantId, which just falls back to "organizations") skip the
+  // check without going through validateConfig at all.
+  const tenantId = "tenantId" in data ? data.tenantId : undefined;
+  if (tenantId) {
+    const validation = await oauthProvider.validateConfig?.({ tenantId });
+    if (validation && !validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
   }
 
@@ -145,10 +133,9 @@ export async function POST(request: NextRequest) {
   }
 
   const provider = data.provider;
-  // getOAuthProvider is non-null for the discriminated-union providers; its
   // settingsKey is the same value as the audit rows recorded before this
   // refactor (google_oauth_credentials / microsoft_oauth_credentials).
-  const settingsKey = getOAuthProvider(provider)!.settingsKey;
+  const settingsKey = oauthProvider.settingsKey;
   // Saving OAuth app settings is idempotent, so an audit-write failure is
   // allowed to surface as a 500 rather than being dropped fire-and-forget —
   // the admin can safely retry the same save.

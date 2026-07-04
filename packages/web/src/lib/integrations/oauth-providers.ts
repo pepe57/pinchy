@@ -11,7 +11,14 @@
  * oauth-settings.ts (server-only) — not the other way around. Importing them
  * from oauth-settings.ts would drag `@/lib/settings` → `db` → `postgres` into
  * the client bundle and break the build.
+ *
+ * `validateMicrosoftTenant` from oauth-preflight.ts is the one exception to
+ * "no imports beyond this file's own data": that module has zero imports of
+ * its own (only global fetch/process/AbortSignal), so it is just as
+ * client-safe as this file and is used to implement the microsoft
+ * descriptor's `validateConfig`.
  */
+import { validateMicrosoftTenant } from "@/lib/integrations/oauth-preflight";
 
 /**
  * Settings-storage keys for the per-provider OAuth app credentials. The
@@ -108,6 +115,15 @@ export interface OAuthProviderDescriptor {
    * `profile` is unknown because it comes from a third-party API response.
    */
   extractEmail(profile: unknown): string | undefined;
+  /**
+   * Optional provider-specific pre-flight validation of the OAuth *app config*
+   * at save time (before the authorize redirect). Returns { ok: false, error }
+   * with a user-facing message to block the save; undefined method or { ok: true }
+   * allows it. Microsoft validates the tenant id; Google has nothing to check.
+   */
+  validateConfig?(input: {
+    tenantId?: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /** Coerce a value to a non-empty string, or undefined otherwise. */
@@ -191,6 +207,23 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderDescriptor> =
       const record = asRecord(profile);
       if (!record) return undefined;
       return asNonEmptyString(record.mail) ?? asNonEmptyString(record.userPrincipalName);
+    },
+    async validateConfig({ tenantId }) {
+      // AADSTS90002 ("tenant not found") is a pre-authorize error on
+      // Microsoft's own authorize endpoint, so it never redirects back to our
+      // callback — a wrong Tenant ID would otherwise trap the admin on
+      // Microsoft's error page with no way for Pinchy to catch it. Fails open
+      // on network/unknown errors — only a definitive "not_found" blocks save.
+      const tenant = await validateMicrosoftTenant(tenantId ?? "");
+      if (tenant.ok === false) {
+        return {
+          ok: false,
+          error:
+            `Tenant ID "${tenantId}" was not found. Make sure you pasted the ` +
+            `Directory (tenant) ID from Azure — not the Application (client) ID.`,
+        };
+      }
+      return { ok: true };
     },
   },
 };
