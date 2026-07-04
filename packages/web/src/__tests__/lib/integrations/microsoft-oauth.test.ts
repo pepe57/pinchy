@@ -3,6 +3,7 @@ import { refreshAccessToken } from "@/lib/integrations/microsoft-oauth";
 // isTokenExpired is shared across all providers; test it directly against its
 // source module instead of via microsoft-oauth's re-export (see D14 cleanup).
 import { isTokenExpired } from "@/lib/integrations/oauth-token";
+import { MICROSOFT_OAUTH_SCOPES, OAUTH_PROVIDERS } from "@/lib/integrations/oauth-providers";
 
 describe("microsoft-oauth", () => {
   beforeEach(() => {
@@ -73,6 +74,44 @@ describe("microsoft-oauth", () => {
     });
     expect(fetch).toHaveBeenCalledWith(
       "http://graph-mock:9005/t/oauth2/v2.0/token",
+      expect.any(Object)
+    );
+  });
+
+  it("sends the shared MICROSOFT_OAUTH_SCOPES constant as the scope param, not a byte-copy", async () => {
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ access_token: "a", refresh_token: "r", expires_in: 1 }),
+    });
+    await refreshAccessToken({
+      tenantId: "t",
+      refreshToken: "r",
+      clientId: "c",
+      clientSecret: "s",
+    });
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const body = init.body as URLSearchParams;
+    expect(body.get("scope")).toBe(MICROSOFT_OAUTH_SCOPES);
+  });
+
+  it("builds the token URL via the descriptor's tokenUrl(), honoring MICROSOFT_OAUTH_BASE_URL", async () => {
+    process.env.MICROSOFT_OAUTH_BASE_URL = "";
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ access_token: "a", refresh_token: "r", expires_in: 1 }),
+    });
+    await refreshAccessToken({
+      tenantId: "my-tenant",
+      refreshToken: "r",
+      clientId: "c",
+      clientSecret: "s",
+    });
+    // An explicit empty-string override must behave identically for the
+    // token-exchange descriptor and the refresh call (both use `??`, not
+    // `||`), so an empty env var doesn't silently split them onto different
+    // hosts.
+    expect(fetch).toHaveBeenCalledWith(
+      OAUTH_PROVIDERS.microsoft.tokenUrl({ tenantId: "my-tenant" }),
       expect.any(Object)
     );
   });

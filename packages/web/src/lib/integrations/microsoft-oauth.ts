@@ -1,6 +1,7 @@
 // MICROSOFT_OAUTH_BASE_URL allows E2E tests to redirect OAuth token refresh calls
 // to a local mock server instead of https://login.microsoftonline.com/
 import { computeExpiresAt } from "./oauth-token";
+import { MICROSOFT_OAUTH_SCOPES, OAUTH_PROVIDERS } from "./oauth-providers";
 
 export async function refreshAccessToken(opts: {
   tenantId: string;
@@ -8,11 +9,11 @@ export async function refreshAccessToken(opts: {
   clientId: string;
   clientSecret: string;
 }): Promise<{ accessToken: string; refreshToken: string; expiresAt: string }> {
-  // Read at call time so that test env-var overrides take effect between tests
-  const tokenHost = process.env.MICROSOFT_OAUTH_BASE_URL || "https://login.microsoftonline.com";
-  const tenant = opts.tenantId?.trim() || "organizations";
+  // Reuse the shared descriptor's tokenUrl() so token-exchange (start/callback)
+  // and token-refresh (here) can never drift onto different hosts/tenants.
+  const tokenUrl = OAUTH_PROVIDERS.microsoft.tokenUrl({ tenantId: opts.tenantId });
 
-  const res = await fetch(`${tokenHost}/${tenant}/oauth2/v2.0/token`, {
+  const res = await fetch(tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -20,7 +21,9 @@ export async function refreshAccessToken(opts: {
       refresh_token: opts.refreshToken,
       client_id: opts.clientId,
       client_secret: opts.clientSecret,
-      scope: "offline_access User.Read Mail.ReadWrite Mail.Send",
+      // Reuse the shared scopes constant so a future scope addition flows
+      // through to refresh instead of silently narrowing the refreshed token.
+      scope: MICROSOFT_OAUTH_SCOPES,
     }),
   });
 
