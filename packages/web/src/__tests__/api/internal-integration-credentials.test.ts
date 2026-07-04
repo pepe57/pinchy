@@ -166,6 +166,37 @@ describe("GET /api/internal/integrations/:connectionId/credentials", () => {
     expect(decrypt).toHaveBeenCalledWith("encrypted-blob");
   });
 
+  it("returns non-oauth credentials unchanged even when expiresAt looks expired (dispatch lookup miss, no refresh attempted)", async () => {
+    // The refresh dispatch is keyed by connection.type. A type outside the
+    // {google, microsoft} lookup must never trigger a refresh -- this pins
+    // that the lookup miss behaves exactly like the old per-provider `if`
+    // gates that simply didn't match a non-oauth type.
+    vi.mocked(isTokenExpired).mockReturnValue(true);
+    const expiredAt = new Date(Date.now() - 60_000).toISOString();
+    vi.mocked(decrypt).mockReturnValue(
+      JSON.stringify({
+        accessToken: "odoo-token",
+        refreshToken: "odoo-refresh",
+        expiresAt: expiredAt,
+      })
+    );
+
+    const res = await GET(makeRequest("conn-1"), makeParams("conn-1"));
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data.type).toBe("odoo");
+    expect(data.credentials).toEqual({
+      accessToken: "odoo-token",
+      refreshToken: "odoo-refresh",
+      expiresAt: expiredAt,
+    });
+
+    expect(refreshAccessToken).not.toHaveBeenCalled();
+    expect(refreshMsAccessToken).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
   describe("Google OAuth token refresh", () => {
     beforeEach(() => {
       mockDbSelectResult([

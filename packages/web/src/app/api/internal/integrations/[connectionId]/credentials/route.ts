@@ -11,7 +11,6 @@ import { getOAuthSettings } from "@/lib/integrations/oauth-settings";
 import {
   refreshMicrosoftCredentials,
   OAuthSettingsMissingError,
-  type MicrosoftCredentials,
 } from "@/lib/integrations/microsoft-refresh";
 
 interface GoogleCredentials {
@@ -89,6 +88,34 @@ async function refreshGoogleCredentials(
   });
 }
 
+// Shared minimal shape both GoogleCredentials and MicrosoftCredentials satisfy.
+// Used only for the dispatch lookup below; refreshGoogleCredentials and
+// refreshMicrosoftCredentials keep their own precise parameter/return types
+// internally. expiresAt is required here (rather than optional) because the
+// dispatch call site below only invokes refreshFn once credentials.expiresAt
+// has already been checked truthy, and MicrosoftCredentials.expiresAt is
+// itself required — a required field here keeps both refresh functions
+// structurally assignable to this table without widening either one.
+interface OAuthCredentials {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  [k: string]: unknown;
+}
+
+// Dispatch table keyed by connection.type. connection.type comes from the DB
+// column, not user input, but the lookup is still guarded by the `refreshFn &&`
+// truthiness check below (a plain object, no prototype pollution surface) —
+// a type outside this table (e.g. "odoo", "web-search") simply misses and no
+// refresh is attempted, matching the old per-provider `if` gates exactly.
+const REFRESH_BY_TYPE: Record<
+  string,
+  (connectionId: string, current: OAuthCredentials) => Promise<Record<string, unknown>>
+> = {
+  google: refreshGoogleCredentials,
+  microsoft: refreshMicrosoftCredentials,
+};
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ connectionId: string }> }
@@ -122,46 +149,20 @@ export async function GET(
     return NextResponse.json({ error: "Failed to decrypt credentials" }, { status: 500 });
   }
 
-  // Auto-refresh expired Google OAuth tokens. A failed refresh attempt degrades
-  // gracefully to the current credentials; missing OAuth settings fail loudly
-  // (see OAuthSettingsMissingError). Concurrent callers for the same
-  // connectionId share a single refresh via inFlightGoogleRefreshes.
-  if (
-    connection.type === "google" &&
-    credentials.expiresAt &&
-    isTokenExpired(credentials.expiresAt)
-  ) {
+  // Auto-refresh expired OAuth tokens for whichever provider this connection
+  // is. The persist policy on a failed refresh differs per provider and lives
+  // in the respective refresh function: Google degrades gracefully to the
+  // current credentials (safe — Google does not rotate refresh tokens), while
+  // Microsoft retries the DB persist once and then throws rather than ever
+  // discarding a rotated refresh token (issue #237 — Microsoft DOES rotate,
+  // so losing that token bricks the mailbox). Missing OAuth settings fail
+  // loudly for either provider (see OAuthSettingsMissingError). Concurrent
+  // callers for the same connectionId share a single refresh via each
+  // provider's own in-flight dedup.
+  const refreshFn = REFRESH_BY_TYPE[connection.type];
+  if (refreshFn && credentials.expiresAt && isTokenExpired(credentials.expiresAt)) {
     try {
-      credentials = await refreshGoogleCredentials(connectionId, credentials as GoogleCredentials);
-    } catch (err) {
-      if (err instanceof OAuthSettingsMissingError) {
-        // The access token is expired and there is no way to refresh it —
-        // fail loudly instead of returning a 200 with stale/expired tokens
-        // that the plugin would cache for another 5 minutes and fail on.
-        return NextResponse.json(
-          {
-            error: `${err.provider} OAuth settings missing — reconnect the mailbox or restore the OAuth app`,
-          },
-          { status: 503 }
-        );
-      }
-      throw err;
-    }
-  }
-
-  // Auto-refresh expired Microsoft OAuth tokens. Microsoft rotates the refresh token on
-  // every use — both accessToken AND refreshToken are updated in the DB on each refresh.
-  // Concurrent callers for the same connectionId share a single refresh via inFlightMicrosoftRefreshes.
-  if (
-    connection.type === "microsoft" &&
-    credentials.expiresAt &&
-    isTokenExpired(credentials.expiresAt)
-  ) {
-    try {
-      credentials = await refreshMicrosoftCredentials(
-        connectionId,
-        credentials as MicrosoftCredentials
-      );
+      credentials = await refreshFn(connectionId, credentials as OAuthCredentials);
     } catch (err) {
       if (err instanceof OAuthSettingsMissingError) {
         // The access token is expired and there is no way to refresh it —
